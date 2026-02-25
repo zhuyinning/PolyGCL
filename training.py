@@ -148,35 +148,36 @@ if __name__ == "__main__":
             optimizer.zero_grad()
 
             if not is_graph_dataset:
-            # 原 node-level 保持不变（可选）
-            shuf_idx = np.random.permutation(feat.shape[0])
-            shuf_feat = feat[shuf_idx, :]
-            out = model(edge_index, feat, shuf_feat)
-            loss = loss_fn(out, lbl)
+                # 原 node-level 保持不变（可选）
+                shuf_idx = np.random.permutation(feat.shape[0])
+                shuf_feat = feat[shuf_idx, :]
+                out = model(edge_index, feat, shuf_feat)
+                loss = loss_fn(out, lbl)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-        else:
-            total_loss = 0
+            else:
+                total_loss = 0
 
-            for data in loader:
-            data = data.to(args.device)
-            feat = get_feat(data, n_feat, args.device)
-            # 两个增强视图
-            x1, edge1 = graph_augment(feat, data.edge_index)
-            x2, edge2 = graph_augment(feat, data.edge_index)
-            # graph-level forward
-            z1, z2 = model(x1, edge1, x2, edge2, data.batch)
-            # InfoNCE
-            loss = info_nce(z1, z2)
+                for data in loader:
+                    data = data.to(args.device)
+                    feat = get_feat(data, n_feat, args.device)
+                    # 两个增强视图
+                    x1, edge1 = graph_augment(feat, data.edge_index)
+                    x2, edge2 = graph_augment(feat, data.edge_index)
+                    # graph-level forward
+                    z1, z2 = model(x1, edge1, x2, edge2, data.batch)
+                    # InfoNCE
+                    loss = info_nce(z1, z2)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
 
-        total_loss += loss.item()
+                    total_loss += loss.item()
+            bar()
 
             if loss < best:
                 best = loss
@@ -264,13 +265,13 @@ if __name__ == "__main__":
 
         # ===== 新增：随机打乱 =====
         perm = torch.randperm(len(labels))
-        embeds = embeds[perm]
+        graph_emb = graph_emb[perm]
         labels = labels[perm]
         # ==========================
 
         train_size = int(0.8 * len(labels))
-        train_embs = embeds[:train_size]
-        test_embs = embeds[train_size:]
+        train_embs = graph_emb[:train_size]
+        test_embs = graph_emb[train_size:]
         train_labels = labels[:train_size]
         test_labels = labels[train_size:]
 
