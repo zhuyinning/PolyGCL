@@ -47,6 +47,14 @@ np.random.seed(args.seed)
 th.manual_seed(args.seed)
 th.cuda.manual_seed_all(args.seed)
 
+from torch_geometric.utils import dropout_edge
+import torch.nn.functional as F
+
+def graph_augment(x, edge_index, drop_edge_rate=0.2, drop_feat_rate=0.2):
+    edge_index_aug, _ = dropout_edge(edge_index, p=drop_edge_rate)
+    x_aug = F.dropout(x, p=drop_feat_rate, training=True)
+    return x_aug, edge_index_aug
+
 from dataset_loader import DataLoader
 import time
 
