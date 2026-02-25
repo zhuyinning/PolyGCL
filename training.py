@@ -309,7 +309,7 @@ if __name__ == "__main__":
                 batch = batch.to(args.device)
 
                 # 复用 PolyGCL 的 node embedding
-                h = model.get_embedding(batch.edge_index, batch.x)  # [N, hid_dim]
+                h = model.get_embedding(batch.edge_index, batch.x, detach=False)  # [N, hid_dim]
                 g = global_mean_pool(h, batch.batch)                # [B, hid_dim]
 
                 logits = cls_head(g)                                # [B, C]
