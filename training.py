@@ -53,7 +53,9 @@ import time
 def get_feat(batch, n_feat, device):
     feat = batch.x
     if feat is None:
-        feat = torch.ones((batch.num_nodes, n_feat), device=device)
+        row, col = batch.edge_index
+        deg = torch.bincount(row, minlength=batch.num_nodes).float().unsqueeze(1)
+        feat = deg.to(device)
     return feat
     
 if __name__ == "__main__":
