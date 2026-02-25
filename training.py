@@ -147,35 +147,35 @@ if __name__ == "__main__":
             model.train()
             total_loss = 0
 
-                for data in loader:
-                    data = data.to(args.device)
-                    feat = get_feat(data, n_feat, args.device)
-                    # 两个增强视图
-                    x1, edge1 = graph_augment(feat, data.edge_index)
-                    x2, edge2 = graph_augment(feat, data.edge_index)
-                    # graph-level forward
-                    z1, z2 = model(x1, edge1, x2, edge2, data.batch)
-                    # InfoNCE
-                    loss = info_nce(z1, z2)
+            for data in loader:
+                data = data.to(args.device)
+                feat = get_feat(data, n_feat, args.device)
+                # 两个增强视图
+                x1, edge1 = graph_augment(feat, data.edge_index)
+                x2, edge2 = graph_augment(feat, data.edge_index)
+                # graph-level forward
+                z1, z2 = model(x1, edge1, x2, edge2, data.batch)
+                # InfoNCE
+                loss = info_nce(z1, z2)
 
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                total_loss += loss.item()
+            loss = total_loss / len(loader)
+            
+            if loss < best:
+                best = loss
+                best_t = epoch
+                cnt_wait = 0
+                th.save(model.state_dict(), 'pkl/best_model_' + args.dataname + tag + '.pkl')
+            else:
+                cnt_wait += 1
 
-                    total_loss += loss.item()
-                loss = total_loss / len(loader)
-
-                if loss < best:
-                    best = loss
-                    best_t = epoch
-                    cnt_wait = 0
-                    th.save(model.state_dict(), 'pkl/best_model_' + args.dataname + tag + '.pkl')
-                else:
-                    cnt_wait += 1
-
-                if cnt_wait == args.patience:
-                    break
-                bar()
+            if cnt_wait == args.patience:
+                break
+            bar()
 
     model.load_state_dict(th.load('pkl/best_model_' + args.dataname + tag + '.pkl'))
     model.eval()
