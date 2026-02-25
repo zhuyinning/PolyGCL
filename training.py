@@ -76,6 +76,8 @@ if __name__ == "__main__":
 
     else:
         n_feat = dataset.num_features
+        if n_feat == 0:
+            n_feat = 1
         n_classes = dataset.num_classes
 
         loader = GeoDataLoader(dataset, batch_size=64, shuffle=True)
@@ -119,7 +121,7 @@ if __name__ == "__main__":
                     batch = batch.to(args.device)
                     feat = batch.x
                     if feat is None:
-                        feat = torch.ones((batch.num_nodes, 1), device=args.device)
+                        feat = torch.ones((batch.num_nodes, n_feat), device=args.device)
                     edge_index = batch.edge_index
                     shuf_idx = torch.randperm(feat.shape[0])
                     shuf_feat = feat[shuf_idx]
