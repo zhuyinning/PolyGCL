@@ -9,6 +9,9 @@ import numpy as np
 import torch as th
 import torch.nn as nn
 from utils import random_splits
+from torch_geometric.loader import DataLoader as GeoDataLoader
+from torch_geometric.nn import global_mean_pool
+import torch.nn.functional as F
 
 warnings.filterwarnings("ignore")
 
@@ -62,6 +65,11 @@ parser.add_argument('--dprate', type=float, default=0.5, help='dropout for propa
 parser.add_argument('--is_bns', type=bool, default=False)
 parser.add_argument('--act_fn', default='relu',
                     help='activation function')
+parser.add_argument("--task", type=str, default="node", choices=["node", "graph"],
+                    help="node: original (single-graph) SSL + linear eval; graph: TU graph classification.")
+parser.add_argument("--batch_size", type=int, default=32)
+parser.add_argument("--eval_epochs", type=int, default=300)  # 图分类训练轮数
+parser.add_argument("--hidden_cls", type=int, default=0)     
 args = parser.parse_args()
 
 # check cuda
@@ -236,3 +244,104 @@ if __name__ == "__main__":
         np.abs(sns.utils.ci(sns.algorithms.bootstrap(values, func=np.mean, n_boot=1000), 95) - values.mean()))
     print(f'test acc mean = {test_acc_mean:.4f} ± {uncertainty * 100:.4f}')
 
+else:
+    # ============ Graph task: TU/ICL graph classification ============
+    n = len(dataset)
+    idx = np.random.permutation(n)
+    n_train = int(0.8 * n)
+    n_val = int(0.1 * n)
+    train_idx = idx[:n_train]
+    val_idx = idx[n_train:n_train + n_val]
+    test_idx = idx[n_train + n_val:]
+
+    train_set = dataset[train_idx.tolist()]
+    val_set = dataset[val_idx.tolist()]
+    test_set = dataset[test_idx.tolist()]
+
+    train_loader = GeoDataLoader(train_set, batch_size=args.batch_size, shuffle=True)
+    val_loader = GeoDataLoader(val_set, batch_size=args.batch_size, shuffle=False)
+    test_loader = GeoDataLoader(test_set, batch_size=args.batch_size, shuffle=False)
+
+    in_dim = dataset.num_features
+    # 没有 dataset.num_classes，用 y.max()+1 
+    try:
+        num_classes = dataset.num_classes
+    except Exception:
+        num_classes = int(dataset.data.y.max().item() + 1)
+
+    model = Model(in_dim=in_dim, out_dim=args.hid_dim, K=args.K, dprate=args.dprate,
+                  dropout=args.dropout, is_bns=args.is_bns, act_fn=args.act_fn).to(args.device)
+
+    # 图分类 head
+    if args.hidden_cls and args.hidden_cls > 0:
+        cls_head = nn.Sequential(
+            nn.Linear(args.hid_dim, args.hidden_cls),
+            nn.ReLU(),
+            nn.Dropout(args.dropout),
+            nn.Linear(args.hidden_cls, num_classes),
+        ).to(args.device)
+    else:
+        cls_head = nn.Linear(args.hid_dim, num_classes).to(args.device)
+
+    optimizer = torch.optim.Adam([
+        {'params': model.encoder.lin1.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
+        {'params': model.encoder.prop1.parameters(), 'weight_decay': args.wd, 'lr': args.lr},
+        {'params': model.alpha, 'weight_decay': args.wd, 'lr': args.lr},
+        {'params': model.beta, 'weight_decay': args.wd, 'lr': args.lr},
+        {'params': cls_head.parameters(), 'weight_decay': args.wd2, 'lr': args.lr2},
+    ])
+
+    def run_epoch(loader, train: bool):
+        if train:
+            model.train()
+            cls_head.train()
+        else:
+            model.eval()
+            cls_head.eval()
+
+        total_loss = 0.0
+        correct = 0
+        total = 0
+
+        for batch in loader:
+            batch = batch.to(args.device)
+
+            # 复用 PolyGCL 的 node embedding
+            h = model.get_embedding(batch.edge_index, batch.x)  # [N, hid_dim]
+            g = global_mean_pool(h, batch.batch)                # [B, hid_dim]
+
+            logits = cls_head(g)                                # [B, C]
+            y = batch.y.view(-1)
+
+            loss = F.cross_entropy(logits, y)
+
+            if train:
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+            total_loss += loss.item() * batch.num_graphs
+            pred = logits.argmax(dim=1)
+            correct += (pred == y).sum().item()
+            total += batch.num_graphs
+
+        return total_loss / max(total, 1), correct / max(total, 1)
+
+    best_val = 0.0
+    best_test = 0.0
+
+    for epoch in range(1, args.eval_epochs + 1):
+        tr_loss, tr_acc = run_epoch(train_loader, train=True)
+        va_loss, va_acc = run_epoch(val_loader, train=False)
+        te_loss, te_acc = run_epoch(test_loader, train=False)
+
+        if va_acc >= best_val:
+            best_val = va_acc
+            best_test = te_acc
+
+        if epoch == 1 or epoch % 10 == 0:
+            print(f"[Graph-{args.dataname}] Epoch {epoch:03d}/{args.eval_epochs} | "
+                  f"train {tr_acc*100:.2f}% loss {tr_loss:.4f} | "
+                  f"val {va_acc*100:.2f}% | test {te_acc*100:.2f}% | best_test {best_test*100:.2f}%")
+
+    print(f"[Graph-{args.dataname}] Final best_test={best_test*100:.2f}% (best_val={best_val*100:.2f}%)")
