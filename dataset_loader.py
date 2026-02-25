@@ -6,6 +6,7 @@ from torch_geometric.datasets import Planetoid, WikipediaNetwork
 from torch_sparse import coalesce
 from torch_geometric.data import InMemoryDataset, download_url, Data
 from torch_geometric.utils.undirected import to_undirected
+from torch_geometric.datasets import TUDataset
 import os
 
 class Chame_Squir_Actor(InMemoryDataset):
@@ -122,10 +123,34 @@ def DataLoader(name):
 
     if name in ['cora', 'citeseer', 'pubmed']:
         dataset = Planetoid(osp.join('./data', name), name, transform=T.NormalizeFeatures())
+
     elif name in ['chameleon', 'actor', 'squirrel']:
         dataset = Chame_Squir_Actor(root='./data/', name=name, transform=T.NormalizeFeatures())
+
     elif name in ['texas', 'cornell', 'wisconsin']:
-        dataset = WebKB(root='./data/',name=name, transform=T.NormalizeFeatures())
+        dataset = WebKB(root='./data/', name=name, transform=T.NormalizeFeatures())
+
+    # 新增TU datasets
+    elif name in ['mutag', 'nci1', 'proteins', 'collab', 'imdb-binary', 'imdb-multi', 'imdb-b', 'imdb-m']:
+        tu_map = {
+            'mutag': 'MUTAG',
+            'nci1': 'NCI1',
+            'proteins': 'PROTEINS',
+            'collab': 'COLLAB',
+            'imdb-binary': 'IMDB-BINARY',
+            'imdb-multi': 'IMDB-MULTI',
+            'imdb-b': 'IMDB-BINARY',
+            'imdb-m': 'IMDB-MULTI',
+        }
+        dataset = TUDataset(root='./data/TUDataset', name=tu_map[name])
+
+        # IMDB/COLLAB 没有节点特征,补一个常数特征
+        if dataset.num_features == 0:
+            for d in dataset:
+                d.x = torch.ones((d.num_nodes, 1), dtype=torch.float)
+        return dataset
+
     else:
         raise ValueError(f'dataset {name} not supported in dataloader')
+
     return dataset
