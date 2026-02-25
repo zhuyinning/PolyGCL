@@ -78,7 +78,7 @@ if __name__ == "__main__":
         n_feat = dataset.num_features
         n_classes = dataset.num_classes
 
-        loader = GeoDataLoader(dataset, batch_size=1, shuffle=True)
+        loader = GeoDataLoader(dataset, batch_size=32, shuffle=True)
 
         total_nodes = sum([d.num_nodes for d in dataset])
         lbl1 = th.ones(total_nodes * 2)
