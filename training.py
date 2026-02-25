@@ -50,6 +50,12 @@ th.cuda.manual_seed_all(args.seed)
 from dataset_loader import DataLoader
 import time
 
+def get_feat(batch, n_feat, device):
+    feat = batch.x
+    if feat is None:
+        feat = torch.ones((batch.num_nodes, n_feat), device=device)
+    return feat
+    
 if __name__ == "__main__":
     print(args)
 
