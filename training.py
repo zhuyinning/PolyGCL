@@ -145,21 +145,7 @@ if __name__ == "__main__":
     with alive_bar(args.epochs) as bar:
         for epoch in range(args.epochs):
             model.train()
-            optimizer.zero_grad()
-
-            if not is_graph_dataset:
-                # 原 node-level 保持不变（可选）
-                shuf_idx = np.random.permutation(feat.shape[0])
-                shuf_feat = feat[shuf_idx, :]
-                out = model(edge_index, feat, shuf_feat)
-                loss = loss_fn(out, lbl)
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-            else:
-                total_loss = 0
+            total_loss = 0
 
                 for data in loader:
                     data = data.to(args.device)
@@ -177,19 +163,19 @@ if __name__ == "__main__":
                     optimizer.step()
 
                     total_loss += loss.item()
-            bar()
+                loss = total_loss / len(loader)
 
-            if loss < best:
-                best = loss
-                best_t = epoch
-                cnt_wait = 0
-                th.save(model.state_dict(), 'pkl/best_model_' + args.dataname + tag + '.pkl')
-            else:
-                cnt_wait += 1
+                if loss < best:
+                    best = loss
+                    best_t = epoch
+                    cnt_wait = 0
+                    th.save(model.state_dict(), 'pkl/best_model_' + args.dataname + tag + '.pkl')
+                else:
+                    cnt_wait += 1
 
-            if cnt_wait == args.patience:
-                break
-            bar()
+                if cnt_wait == args.patience:
+                    break
+                bar()
 
     model.load_state_dict(th.load('pkl/best_model_' + args.dataname + tag + '.pkl'))
     model.eval()
@@ -253,7 +239,8 @@ if __name__ == "__main__":
             for data in loader:
                 data = data.to(args.device)
                 # node embedding
-                h = model.encoder(data.x, data.edge_index)
+                feat = get_feat(data, n_feat, args.device)
+                h = model.encoder(feat, data.edge_index)
                 # graph readout
                 g = global_mean_pool(h, data.batch)
 
