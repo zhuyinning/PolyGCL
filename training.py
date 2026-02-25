@@ -131,13 +131,10 @@ if __name__ == "__main__":
                   is_bns=args.is_bns, act_fn=args.act_fn).to(args.device)
 
     optimizer = torch.optim.Adam([
-        {'params': model.encoder.lin1.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
-        {'params': model.disc.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
-        {'params': model.encoder.prop1.parameters(), 'weight_decay': args.wd, 'lr': args.lr},
-        {'params': model.alpha, 'weight_decay': args.wd, 'lr': args.lr},
-        {'params': model.beta, 'weight_decay': args.wd, 'lr': args.lr}
+        {'params': model.encoder.parameters(), 'lr': args.lr1},
+        {'params': model.proj.parameters(), 'lr': args.lr1}
     ])
-
+    
     loss_fn = nn.BCEWithLogitsLoss()
 
     best = float("inf")
