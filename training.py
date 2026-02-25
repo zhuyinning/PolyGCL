@@ -29,8 +29,8 @@ parser.add_argument("--lr2", type=float, default=0.01)
 parser.add_argument("--wd", type=float, default=0.0)
 parser.add_argument("--wd1", type=float, default=0.0)
 parser.add_argument("--wd2", type=float, default=0.0)
-parser.add_argument("--hid_dim", type=int, default=512)
-parser.add_argument("--K", type=int, default=10)
+parser.add_argument("--hid_dim", type=int, default=128)
+parser.add_argument("--K", type=int, default=3)
 parser.add_argument('--dropout', type=float, default=0.5)
 parser.add_argument('--dprate', type=float, default=0.5)
 parser.add_argument('--is_bns', type=bool, default=False)
@@ -54,6 +54,29 @@ def graph_augment(x, edge_index, drop_edge_rate=0.2, drop_feat_rate=0.2):
     edge_index_aug, _ = dropout_edge(edge_index, p=drop_edge_rate)
     x_aug = F.dropout(x, p=drop_feat_rate, training=True)
     return x_aug, edge_index_aug
+
+def info_nce(z1, z2, temperature=0.2):
+
+    z1 = F.normalize(z1, dim=1)
+    z2 = F.normalize(z2, dim=1)
+
+    N = z1.size(0)
+
+    z = torch.cat([z1, z2], dim=0)
+    sim = torch.mm(z, z.t()) / temperature
+
+    # mask self similarity
+    mask = torch.eye(2*N, device=z.device).bool()
+    sim = sim.masked_fill(mask, -1e9)
+
+    # positive pairs
+    pos = torch.cat([
+        torch.diag(sim, N),
+        torch.diag(sim, -N)
+    ], dim=0)
+
+    loss = -pos + torch.logsumexp(sim, dim=1)
+    return loss.mean()
 
 from dataset_loader import DataLoader
 import time
@@ -128,26 +151,35 @@ if __name__ == "__main__":
             optimizer.zero_grad()
 
             if not is_graph_dataset:
-                shuf_idx = np.random.permutation(feat.shape[0])
-                shuf_feat = feat[shuf_idx, :]
-                out = model(edge_index, feat, shuf_feat)
-            else:
-                outs = []
-                for batch in loader:
-                    batch = batch.to(args.device)
-                    feat = batch.x
-                    if feat is None:
-                        feat = torch.ones((batch.num_nodes, n_feat), device=args.device)
-                    edge_index = batch.edge_index
-                    shuf_idx = torch.randperm(feat.shape[0])
-                    shuf_feat = feat[shuf_idx]
-                    out = model(edge_index, feat, shuf_feat)
-                    outs.append(out)
-                out = torch.cat(outs)
-
+            # 原 node-level 保持不变（可选）
+            shuf_idx = np.random.permutation(feat.shape[0])
+            shuf_feat = feat[shuf_idx, :]
+            out = model(edge_index, feat, shuf_feat)
             loss = loss_fn(out, lbl)
+
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+        else:
+            total_loss = 0
+
+            for data in loader:
+            data = data.to(args.device)
+            feat = get_feat(data, n_feat, args.device)
+            # 两个增强视图
+            x1, edge1 = graph_augment(feat, data.edge_index)
+            x2, edge2 = graph_augment(feat, data.edge_index)
+            # graph-level forward
+            z1, z2 = model(x1, edge1, x2, edge2, data.batch)
+            # InfoNCE
+            loss = info_nce(z1, z2)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        total_loss += loss.item()
 
             if loss < best:
                 best = loss
@@ -213,23 +245,25 @@ if __name__ == "__main__":
                 test_acc = th.sum(test_preds == test_labels).float() / test_labels.shape[0]
 
             results.append(test_acc.cpu().item())
-
     else:
-        embeds_list = []
-        labels_list = []
+        model.eval()
+        graph_embs = []
+        labels = []
+        loader = GeoDataLoader(dataset, batch_size=64, shuffle=False)
 
-        loader = GeoDataLoader(dataset, batch_size=1, shuffle=False)
+        with torch.no_grad():
+            for data in loader:
+                data = data.to(args.device)
+                # node embedding
+                h = model.encoder(data.x, data.edge_index)
+                # graph readout
+                g = global_mean_pool(h, data.batch)
 
-        for batch in loader:
-            batch = batch.to(args.device)
-            feat = get_feat(batch, n_feat, args.device)
-            node_emb = model.get_embedding(batch.edge_index, feat)
-            graph_emb = global_mean_pool(node_emb, batch.batch)
-            embeds_list.append(graph_emb)
-            labels_list.append(batch.y)
+                graph_embs.append(g)
+                labels.append(data.y)
 
-        embeds = torch.cat(embeds_list, dim=0)
-        labels = torch.cat(labels_list, dim=0)
+        graph_emb = torch.cat(graph_embs, dim=0)
+        labels = torch.cat(labels, dim=0)
 
         # ===== 新增：随机打乱 =====
         perm = torch.randperm(len(labels))
