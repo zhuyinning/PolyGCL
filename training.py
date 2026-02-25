@@ -206,7 +206,8 @@ if __name__ == "__main__":
 
         for batch in loader:
             batch = batch.to(args.device)
-            node_emb = model.get_embedding(batch.edge_index, batch.x)
+            feat = get_feat(batch, n_feat, args.device)
+            node_emb = model.get_embedding(batch.edge_index, feat)
             graph_emb = global_mean_pool(node_emb, batch.batch)
             embeds_list.append(graph_emb)
             labels_list.append(batch.y)
