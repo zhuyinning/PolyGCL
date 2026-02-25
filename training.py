@@ -118,6 +118,8 @@ if __name__ == "__main__":
                 for batch in loader:
                     batch = batch.to(args.device)
                     feat = batch.x
+                    if feat is None:
+                        feat = torch.ones((batch.num_nodes, 1), device=args.device)
                     edge_index = batch.edge_index
                     shuf_idx = torch.randperm(feat.shape[0])
                     shuf_feat = feat[shuf_idx]
