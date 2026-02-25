@@ -210,6 +210,12 @@ if __name__ == "__main__":
         embeds = torch.cat(embeds_list, dim=0)
         labels = torch.cat(labels_list, dim=0)
 
+        # ===== 新增：随机打乱 =====
+        perm = torch.randperm(len(labels))
+        embeds = embeds[perm]
+        labels = labels[perm]
+        # ==========================
+
         train_size = int(0.8 * len(labels))
         train_embs = embeds[:train_size]
         test_embs = embeds[train_size:]
