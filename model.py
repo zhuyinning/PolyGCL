@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import numpy as np
 from torch.nn import Parameter, Linear
 from ChebnetII_pro import ChebnetII_prop
+from torch_geometric.nn import global_mean_pool
 
 
 class LogReg(nn.Module):
@@ -44,6 +45,24 @@ class Discriminator(nn.Module):
         return logits
 
 
+class GraphClassifier(nn.Module):
+    def __init__(self, in_dim, num_classes, hidden_cls=0, dropout=0.5):
+        super(GraphClassifier, self).__init__()
+        self.hidden_cls = hidden_cls
+        if hidden_cls and hidden_cls > 0:
+            self.net = nn.Sequential(
+                nn.Linear(in_dim, hidden_cls),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_cls, num_classes),
+            )
+        else:
+            self.net = nn.Linear(in_dim, num_classes)
+
+    def forward(self, g):
+        return self.net(g)
+
+
 class Model(nn.Module):
     def __init__(self, in_dim, out_dim, K, dprate, dropout, is_bns, act_fn):
         super(Model, self).__init__()
@@ -55,13 +74,34 @@ class Model(nn.Module):
         self.alpha = nn.Parameter(torch.tensor(0.5), requires_grad=True)
         self.beta = nn.Parameter(torch.tensor(0.5), requires_grad=True)
 
-    def get_embedding(self, edge_index, feat):
+        self.graph_cls = None
+        self.graph_cls_dropout = dropout
+
+
+    def init_graph_classifier(self, num_classes, hidden_cls=0, dropout=None):
+        if dropout is None:
+            dropout = self.graph_cls_dropout
+        self.graph_cls = GraphClassifier(in_dim=self.encoder.lin1.out_features, num_classes=num_classes, hidden_cls=hidden_cls, dropout=dropout)
+        return self.graph_cls
+
+
+    def get_embedding(self, edge_index, feat, detach=True):
         h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
         h2 = self.encoder(x=feat, edge_index=edge_index, highpass=False)
 
         h = torch.mul(self.alpha, h1) + torch.mul(self.beta, h2)
 
-        return h.detach()
+        return h.detach() if detach else h
+
+
+    def forward_graph(self, edge_index, feat, batch, detach=False):
+        if self.graph_cls is None:
+            raise RuntimeError("graph classifier is not initialized. Call model.init_graph_classifier(num_classes, hidden_cls=...) first.")
+
+        h = self.get_embedding(edge_index, feat, detach=detach)
+        g = global_mean_pool(h, batch)
+        logits = self.graph_cls(g)
+        return logits
 
 
     def forward(self, edge_index, feat, shuf_feat):
