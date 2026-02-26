@@ -55,7 +55,7 @@ def graph_augment(x, edge_index, drop_edge_rate=0.1, drop_feat_rate=0.1):
     x_aug = F.dropout(x, p=drop_feat_rate, training=True)
     return x_aug, edge_index_aug
 
-def info_nce(z1, z2, temperature=0.5):
+def info_nce(z1, z2, temperature=0.2):
 
     z1 = F.normalize(z1, dim=1)
     z2 = F.normalize(z2, dim=1)
