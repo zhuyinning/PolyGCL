@@ -3,7 +3,6 @@ import torch.nn as nn
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import get_laplacian
-from torch_geometric.nn import global_mean_pool
 
 import torch
 import torch.nn.functional as F
@@ -49,33 +48,39 @@ class Model(nn.Module):
     def __init__(self, in_dim, out_dim, K, dprate, dropout, is_bns, act_fn):
         super(Model, self).__init__()
 
-        self.encoder = ChebNetII(
-            num_features=in_dim,
-            hidden=out_dim,
-            K=K,
-            dprate=dprate,
-            dropout=dropout,
-            is_bns=is_bns,
-            act_fn=act_fn
-        )
+        self.encoder = ChebNetII(num_features=in_dim, hidden=out_dim, K=K, dprate=dprate, dropout=dropout, is_bns=is_bns, act_fn=act_fn)
 
-        self.proj = nn.Sequential(
-            nn.Linear(out_dim, out_dim),
-            nn.ReLU(),
-            nn.Linear(out_dim, out_dim)
-        )
+        self.disc = Discriminator(out_dim)
+        self.act_fn = nn.ReLU()
+        self.alpha = nn.Parameter(torch.tensor(0.5), requires_grad=True)
+        self.beta = nn.Parameter(torch.tensor(0.5), requires_grad=True)
 
-    def forward(self, x1, edge1, x2, edge2, batch):
-        h1 = self.encoder(x1, edge1)
-        h2 = self.encoder(x2, edge2)
+    def get_embedding(self, edge_index, feat):
+        h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
+        h2 = self.encoder(x=feat, edge_index=edge_index, highpass=False)
 
-        g1 = global_mean_pool(h1, batch)
-        g2 = global_mean_pool(h2, batch)
+        h = torch.mul(self.alpha, h1) + torch.mul(self.beta, h2)
 
-        z1 = self.proj(g1)
-        z2 = self.proj(g2)
+        return h.detach()
 
-        return z1, z2
+
+    def forward(self, edge_index, feat, shuf_feat):
+        # positive
+        h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
+        h2 = self.encoder(x=feat, edge_index=edge_index, highpass=False)
+
+        # negative
+        h3 = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=True)
+        h4 = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=False)
+
+        h = torch.mul(self.alpha, h1) + torch.mul(self.beta, h2)
+
+        c = self.act_fn(torch.mean(h, dim=0))
+
+        out = self.disc(h1, h2, h3, h4, c)
+
+        return out
+
 
 class ChebNetII(torch.nn.Module):
     def __init__(self, num_features, hidden=512, K=10, dprate=0.50, dropout=0.50, is_bns=False, act_fn='relu'):
