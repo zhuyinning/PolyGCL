@@ -90,125 +90,184 @@ def get_feat(batch, n_feat, device):
     return feat
     
 if __name__ == "__main__":
-    print(args)
 
-    dataset = DataLoader(name=args.dataname)
+    SEEDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    final_results = []
 
-    is_graph_dataset = len(dataset) > 1
+    for run_seed in SEEDS:
+        print(f"\n========== Seed {run_seed} ==========")
 
-    if not is_graph_dataset:
-        data = dataset[0]
-        feat = data.x
-        label = data.y
-        edge_index = data.edge_index
+        # 设置随机种子
+        random.seed(run_seed)
+        np.random.seed(run_seed)
+        th.manual_seed(run_seed)
+        th.cuda.manual_seed_all(run_seed)
 
-        n_feat = feat.shape[1]
-        n_classes = np.unique(label).shape[0]
+        # 把 args.seed 同步成当前 seed
+        args.seed = run_seed
 
-        edge_index = edge_index.to(args.device)
-        feat = feat.to(args.device)
+        print(args)
+        
+        dataset = DataLoader(name=args.dataname)
+        is_graph_dataset = len(dataset) > 1
 
-        n_node = feat.shape[0]
-        lbl1 = th.ones(n_node * 2)
-        lbl2 = th.zeros(n_node * 2)
-        lbl = th.cat((lbl1, lbl2)).to(args.device)
+        if not is_graph_dataset:
+            data = dataset[0]
+            feat = data.x
+            label = data.y
+            edge_index = data.edge_index
 
-    else:
-        n_feat = dataset.num_features
-        if n_feat == 0:
-            n_feat = 1
-        n_classes = dataset.num_classes
+            n_feat = feat.shape[1]
+            n_classes = np.unique(label).shape[0]
 
-        loader = GeoDataLoader(dataset, batch_size=64, shuffle=True)
+            edge_index = edge_index.to(args.device)
+            feat = feat.to(args.device)
 
-        total_nodes = sum([d.num_nodes for d in dataset])
-        lbl1 = th.ones(total_nodes * 2)
-        lbl2 = th.zeros(total_nodes * 2)
-        lbl = th.cat((lbl1, lbl2)).to(args.device)
+            n_node = feat.shape[0]
+            lbl1 = th.ones(n_node * 2)
+            lbl2 = th.zeros(n_node * 2)
+            lbl = th.cat((lbl1, lbl2)).to(args.device)
 
-    model = Model(in_dim=n_feat, out_dim=args.hid_dim, K=args.K,
-                  dprate=args.dprate, dropout=args.dropout,
-                  is_bns=args.is_bns, act_fn=args.act_fn).to(args.device)
+        else:
+            n_feat = dataset.num_features
+            if n_feat == 0:
+                n_feat = 1
+            n_classes = dataset.num_classes
 
-    optimizer = torch.optim.Adam([
-        {'params': model.encoder.parameters(), 'lr': args.lr1},
-        {'params': model.proj.parameters(), 'lr': args.lr1}
-    ])
-    
-    loss_fn = nn.BCEWithLogitsLoss()
+            loader = GeoDataLoader(dataset, batch_size=64, shuffle=True)
 
-    best = float("inf")
-    cnt_wait = 0
-    best_t = 0
-    tag = str(int(time.time()))
+            total_nodes = sum([d.num_nodes for d in dataset])
+            lbl1 = th.ones(total_nodes * 2)
+            lbl2 = th.zeros(total_nodes * 2)
+            lbl = th.cat((lbl1, lbl2)).to(args.device)
 
-    with alive_bar(args.epochs) as bar:
-        for epoch in range(args.epochs):
-            model.train()
-            total_loss = 0
+        model = Model(in_dim=n_feat, out_dim=args.hid_dim, K=args.K,
+                      dprate=args.dprate, dropout=args.dropout,
+                      is_bns=args.is_bns, act_fn=args.act_fn).to(args.device)
 
-            for data in loader:
-                data = data.to(args.device)
-                feat = get_feat(data, n_feat, args.device)
-                # 两个增强视图
-                x1, edge1 = graph_augment(feat, data.edge_index)
-                x2, edge2 = graph_augment(feat, data.edge_index)
-                # graph-level forward
-                z1, z2 = model(x1, edge1, x2, edge2, data.batch)
-                # InfoNCE
-                loss = info_nce(z1, z2)
+        optimizer = torch.optim.Adam([
+            {'params': model.encoder.parameters(), 'lr': args.lr1},
+            {'params': model.proj.parameters(), 'lr': args.lr1}
+        ])
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                
-                total_loss += loss.item()
-            loss = total_loss / len(loader)
-            
-            if loss < best:
-                best = loss
-                best_t = epoch
-                cnt_wait = 0
-                th.save(model.state_dict(), 'pkl/best_model_' + args.dataname + tag + '.pkl')
-            else:
-                cnt_wait += 1
+        best = float("inf")
+        cnt_wait = 0
 
-            if cnt_wait == args.patience:
-                break
-            bar()
+        # 用 seed 做 tag
+        tag = f"_seed_{run_seed}"
+        best_path = f"pkl/best_model_{args.dataname}{tag}.pkl"
 
-    model.load_state_dict(th.load('pkl/best_model_' + args.dataname + tag + '.pkl'))
-    model.eval()
+        with alive_bar(args.epochs) as bar:
+            for epoch in range(args.epochs):
+                model.train()
+                total_loss = 0
 
-    print("=== Evaluation ===")
-    results = []
+                for data in loader:
+                    data = data.to(args.device)
+                    feat = get_feat(data, n_feat, args.device)
 
-    if not is_graph_dataset:
-        embeds = model.get_embedding(edge_index, feat)
+                    x1, edge1 = graph_augment(feat, data.edge_index)
+                    x2, edge2 = graph_augment(feat, data.edge_index)
 
-        SEEDS = [1941488137, 4198936517, 983997847, 4023022221, 4019585660,
-                 2108550661, 1648766618, 629014539, 3212139042, 2424918363]
+                    z1, z2 = model(x1, edge1, x2, edge2, data.batch)
+                    loss = info_nce(z1, z2)
 
-        train_rate = 0.6
-        val_rate = 0.2
-        percls_trn = int(round(train_rate * len(label) / n_classes))
-        val_lb = int(round(val_rate * len(label)))
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
 
-        for i in range(10):
-            seed = SEEDS[i]
-            train_mask, val_mask, test_mask = random_splits(label, n_classes, percls_trn, val_lb, seed=seed)
+                    total_loss += loss.item()
 
-            train_mask = th.BoolTensor(train_mask).to(args.device)
-            val_mask = th.BoolTensor(val_mask).to(args.device)
-            test_mask = th.BoolTensor(test_mask).to(args.device)
+                loss = total_loss / len(loader)
 
-            train_embs = embeds[train_mask]
-            val_embs = embeds[val_mask]
-            test_embs = embeds[test_mask]
+                if loss < best:
+                    best = loss
+                    cnt_wait = 0
+                    th.save(model.state_dict(), best_path)
+                else:
+                    cnt_wait += 1
 
-            train_labels = label[train_mask]
-            val_labels = label[val_mask]
-            test_labels = label[test_mask]
+                if cnt_wait == args.patience:
+                    break
+                bar()
+
+        model.load_state_dict(th.load(best_path))
+        model.eval()
+
+        print("=== Evaluation ===")
+        results = []
+
+        if not is_graph_dataset:
+            embeds = model.get_embedding(edge_index, feat)
+
+            SEEDS_INNER = [1941488137, 4198936517, 983997847, 4023022221, 4019585660,
+                           2108550661, 1648766618, 629014539, 3212139042, 2424918363]
+
+            train_rate = 0.6
+            val_rate = 0.2
+            percls_trn = int(round(train_rate * len(label) / n_classes))
+            val_lb = int(round(val_rate * len(label)))
+
+            for i in range(10):
+                seed = SEEDS_INNER[i]
+                train_mask, val_mask, test_mask = random_splits(label, n_classes, percls_trn, val_lb, seed=seed)
+
+                train_mask = th.BoolTensor(train_mask).to(args.device)
+                val_mask = th.BoolTensor(val_mask).to(args.device)
+                test_mask = th.BoolTensor(test_mask).to(args.device)
+
+                train_embs = embeds[train_mask]
+                test_embs = embeds[test_mask]
+                train_labels = label[train_mask]
+                test_labels = label[test_mask]
+
+                logreg = LogReg(args.hid_dim, n_classes).to(args.device)
+                opt = th.optim.Adam(logreg.parameters(), lr=args.lr2, weight_decay=args.wd2)
+                loss_fn = nn.CrossEntropyLoss()
+
+                for epoch in range(2000):
+                    logreg.train()
+                    opt.zero_grad()
+                    logits = logreg(train_embs)
+                    loss = loss_fn(logits, train_labels)
+                    loss.backward()
+                    opt.step()
+
+                logreg.eval()
+                with th.no_grad():
+                    test_logits = logreg(test_embs)
+                    test_preds = th.argmax(test_logits, dim=1)
+                    test_acc = th.sum(test_preds == test_labels).float() / test_labels.shape[0]
+
+                results.append(test_acc.cpu().item())
+
+        else:
+            graph_embs = []
+            labels = []
+            loader_eval = GeoDataLoader(dataset, batch_size=64, shuffle=False)
+
+            with torch.no_grad():
+                for data in loader_eval:
+                    data = data.to(args.device)
+                    feat = get_feat(data, n_feat, args.device)
+                    h = model.encoder(feat, data.edge_index)
+                    g = global_mean_pool(h, data.batch)
+                    graph_embs.append(g)
+                    labels.append(data.y)
+
+            graph_emb = torch.cat(graph_embs, dim=0)
+            labels = torch.cat(labels, dim=0)
+
+            # 每次 split 都不同
+            perm = torch.randperm(len(labels))
+            graph_emb = graph_emb[perm]
+            labels = labels[perm]
+
+            train_size = int(0.8 * len(labels))
+            train_embs = graph_emb[:train_size]
+            test_embs = graph_emb[train_size:]
+            train_labels = labels[:train_size]
+            test_labels = labels[train_size:]
 
             logreg = LogReg(args.hid_dim, n_classes).to(args.device)
             opt = th.optim.Adam(logreg.parameters(), lr=args.lr2, weight_decay=args.wd2)
@@ -229,57 +288,15 @@ if __name__ == "__main__":
                 test_acc = th.sum(test_preds == test_labels).float() / test_labels.shape[0]
 
             results.append(test_acc.cpu().item())
-    else:
-        model.eval()
-        graph_embs = []
-        labels = []
-        loader = GeoDataLoader(dataset, batch_size=64, shuffle=False)
 
-        with torch.no_grad():
-            for data in loader:
-                data = data.to(args.device)
-                # node embedding
-                feat = get_feat(data, n_feat, args.device)
-                h = model.encoder(feat, data.edge_index)
-                # graph readout
-                g = global_mean_pool(h, data.batch)
+        acc = np.mean(results) * 100
+        print("Final Acc:", acc)
+        final_results.append(acc)
 
-                graph_embs.append(g)
-                labels.append(data.y)
+    mean_acc = np.mean(final_results)
+    std_acc = np.std(final_results)
 
-        graph_emb = torch.cat(graph_embs, dim=0)
-        labels = torch.cat(labels, dim=0)
-
-        # ===== 新增：随机打乱 =====
-        perm = torch.randperm(len(labels))
-        graph_emb = graph_emb[perm]
-        labels = labels[perm]
-        # ==========================
-
-        train_size = int(0.8 * len(labels))
-        train_embs = graph_emb[:train_size]
-        test_embs = graph_emb[train_size:]
-        train_labels = labels[:train_size]
-        test_labels = labels[train_size:]
-
-        logreg = LogReg(args.hid_dim, n_classes).to(args.device)
-        opt = th.optim.Adam(logreg.parameters(), lr=args.lr2, weight_decay=args.wd2)
-        loss_fn = nn.CrossEntropyLoss()
-
-        for epoch in range(2000):
-            logreg.train()
-            opt.zero_grad()
-            logits = logreg(train_embs)
-            loss = loss_fn(logits, train_labels)
-            loss.backward()
-            opt.step()
-
-        logreg.eval()
-        with th.no_grad():
-            test_logits = logreg(test_embs)
-            test_preds = th.argmax(test_logits, dim=1)
-            test_acc = th.sum(test_preds == test_labels).float() / test_labels.shape[0]
-
-        results.append(test_acc.cpu().item())
-
-    print("Final Acc:", np.mean(results) * 100)
+    print("\n======================================")
+    print(f"Final Result over {len(SEEDS)} runs:")
+    print(f"{mean_acc:.2f} ± {std_acc:.2f}")
+    print("======================================")
