@@ -3,14 +3,20 @@
 This repository contains a PyTorch implementation of ICLR 2024 paper "[*PolyGCL: GRAPH CONTRASTIVE LEARNING via Learnable Spectral Polynomial Filters*](https://openreview.net/pdf?id=y21ZO6M86t)".
 
 
-## Environment Settings    
-- pytorch 1.11.0
-- numpy 1.20.3
-- torch-geometric 1.7.2
-- dgl-cu113 0.8.2
-- scipy 1.7.1
-- seaborn 0.11.2
-- scikit-learn 0.24.2
+## Dependencies
+Please setup the environment with Python 3.10 and CUDA 11.8. Typically, you might need to run the following commands:
+
+```
+pip install --upgrade pip setuptools wheel
+pip install numpy==1.26.4
+pip install torch==2.2.2+cu118 torchvision==0.17.2+cu118 torchaudio==2.2.2+cu118 \
+--index-url https://download.pytorch.org/whl/cu118
+pip install torch-geometric
+pip install torch-scatter torch-sparse torch-cluster torch-spline-conv \
+-f https://data.pyg.org/whl/torch-2.2.0+cu118.html
+pip install dgl -f https://data.dgl.ai/wheels/cu118/repo.html
+pip install networkx matplotlib seaborn==0.13.2 alive-progress
+```
 
 ### Datasets
 We provide the small datasets in the folder 'data'. You can access the heterophilic datasets and the large heterophilic graph arXiv-year via [heterophilous-graphs](https://github.com/yandex-research/heterophilous-graphs) and [LINKX](https://github.com/CUAI/Non-Homophily-Large-Scale) respectively.
