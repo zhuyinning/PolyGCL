@@ -3,6 +3,7 @@ import warnings
 import seaborn as sns
 
 import torch
+import torch.nn.functional as F
 from alive_progress import alive_bar
 import random
 import numpy as np
@@ -58,6 +59,21 @@ def get_feat(batch, n_feat, device):
         deg = torch.bincount(row, minlength=batch.num_nodes).float().unsqueeze(1)
         feat = deg.to(device)
     return feat
+
+def info_nce(z1, z2, temperature=0.2):
+    z1 = F.normalize(z1, dim=1)
+    z2 = F.normalize(z2, dim=1)
+    N = z1.size(0)
+    z = torch.cat([z1, z2], dim=0)
+    sim = torch.mm(z, z.t()) / temperature
+    mask = torch.eye(2*N, device=z.device).bool()
+    sim = sim.masked_fill(mask, -1e9)
+    pos = torch.cat([
+        torch.diag(sim, N),
+        torch.diag(sim, -N)
+    ], dim=0)
+    loss = -pos + torch.logsumexp(sim, dim=1)
+    return loss.mean()
     
 if __name__ == "__main__":
     print(args)
@@ -101,14 +117,10 @@ if __name__ == "__main__":
                   is_bns=args.is_bns, act_fn=args.act_fn).to(args.device)
 
     optimizer = torch.optim.Adam([
-        {'params': model.encoder.lin1.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
-        {'params': model.disc.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
-        {'params': model.encoder.prop1.parameters(), 'weight_decay': args.wd, 'lr': args.lr},
-        {'params': model.alpha, 'weight_decay': args.wd, 'lr': args.lr},
-        {'params': model.beta, 'weight_decay': args.wd, 'lr': args.lr}
+        {'params': model.encoder.parameters(), 'lr': args.lr1},
+        {'params': model.proj.parameters(), 'lr': args.lr1},
+        {'params': [model.alpha, model.beta], 'lr': args.lr1}
     ])
-
-    loss_fn = nn.BCEWithLogitsLoss()
 
     best = float("inf")
     cnt_wait = 0
@@ -118,32 +130,25 @@ if __name__ == "__main__":
     with alive_bar(args.epochs) as bar:
         for epoch in range(args.epochs):
             model.train()
-            optimizer.zero_grad()
+            epoch_loss = 0.0
 
-            if not is_graph_dataset:
-                shuf_idx = np.random.permutation(feat.shape[0])
-                shuf_feat = feat[shuf_idx, :]
-                out = model(edge_index, feat, shuf_feat)
-            else:
-                outs = []
-                for batch in loader:
-                    batch = batch.to(args.device)
-                    feat = batch.x
-                    if feat is None:
-                        feat = torch.ones((batch.num_nodes, n_feat), device=args.device)
-                    edge_index = batch.edge_index
-                    shuf_idx = torch.randperm(feat.shape[0])
-                    shuf_feat = feat[shuf_idx]
-                    out = model(edge_index, feat, shuf_feat)
-                    outs.append(out)
-                out = torch.cat(outs)
+            for batch in loader:
+                batch = batch.to(args.device)
+                feat = get_feat(batch, n_feat, args.device)
+                optimizer.zero_grad()
+                z_high, z_low, z_mix = model(feat, batch.edge_index, batch.batch)
+                # 频域对齐
+                loss = info_nce(z_high, z_mix) + info_nce(z_low, z_mix)
 
-            loss = loss_fn(out, lbl)
-            loss.backward()
-            optimizer.step()
+                loss.backward()
+                optimizer.step()
 
-            if loss < best:
-                best = loss
+                epoch_loss += loss.item()
+
+            epoch_loss /= len(loader)
+
+            if epoch_loss < best:
+                best = epoch_loss
                 best_t = epoch
                 cnt_wait = 0
                 th.save(model.state_dict(), 'pkl/best_model_' + args.dataname + tag + '.pkl')
@@ -152,6 +157,7 @@ if __name__ == "__main__":
 
             if cnt_wait == args.patience:
                 break
+
             bar()
 
     model.load_state_dict(th.load('pkl/best_model_' + args.dataname + tag + '.pkl'))
@@ -216,8 +222,9 @@ if __name__ == "__main__":
         for batch in loader:
             batch = batch.to(args.device)
             feat = get_feat(batch, n_feat, args.device)
-            node_emb = model.get_embedding(batch.edge_index, feat)
-            graph_emb = global_mean_pool(node_emb, batch.batch)
+            with torch.no_grad():
+                z_high, z_low, z_mix = model(feat, batch.edge_index, batch.batch)
+                graph_emb = z_mix  
             embeds_list.append(graph_emb)
             labels_list.append(batch.y)
 
