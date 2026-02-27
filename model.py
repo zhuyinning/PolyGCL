@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import get_laplacian
+from torch_geometric.nn import global_mean_pool
 
 import torch
 import torch.nn.functional as F
@@ -21,29 +22,6 @@ class LogReg(nn.Module):
         ret = self.fc(x)
         return ret
 
-
-class Discriminator(nn.Module):
-    def __init__(self, dim):
-        super(Discriminator, self).__init__()
-        self.fn = nn.Bilinear(dim, dim, 1)
-
-
-    def forward(self, h1, h2, h3, h4, c):
-        c_x = c.expand_as(h1).contiguous()
-
-        # positive
-        sc_1 = self.fn(h2, c_x).squeeze(1)
-        sc_2 = self.fn(h1, c_x).squeeze(1)
-
-        # negative
-        sc_3 = self.fn(h4, c_x).squeeze(1)
-        sc_4 = self.fn(h3, c_x).squeeze(1)
-
-        logits = th.cat((sc_1, sc_2, sc_3, sc_4))
-
-        return logits
-
-
 class Model(nn.Module):
     def __init__(self, in_dim, out_dim, K, dprate, dropout, is_bns, act_fn):
         super(Model, self).__init__()
@@ -55,10 +33,10 @@ class Model(nn.Module):
          # projection head
         self.proj = nn.Sequential(nn.Linear(out_dim, out_dim), nn.ReLU(), nn.Linear(out_dim, out_dim))
 
-    def forward(self, edge_index, feat, shuf_feat):
+    def forward(self, x, edge_index, batch):
          # 频率分解
-        h_high = self.encoder(x=x, edge_index=edge_index, highpass=True)
-        h_low  = self.encoder(x=x, edge_index=edge_index, highpass=False)
+        h_high = self.encoder(x, edge_index, highpass=True)
+        h_low  = self.encoder(x, edge_index, highpass=False)
 
         # graph-level pooling
         g_high = global_mean_pool(h_high, batch)
