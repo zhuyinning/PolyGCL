@@ -15,6 +15,7 @@ warnings.filterwarnings("ignore")
 from model import LogReg, Model
 from torch_geometric.loader import DataLoader as GeoDataLoader
 from torch_geometric.nn import global_mean_pool
+from sklearn.model_selection import StratifiedKFold
 
 parser = argparse.ArgumentParser(description="PolyGCL")
 parser.add_argument('--seed', type=int, default=42)
@@ -222,37 +223,39 @@ if __name__ == "__main__":
 
         embeds = torch.cat(embeds_list, dim=0)
         labels = torch.cat(labels_list, dim=0)
+        
+        # ===== 10-fold Stratified Cross Validation =====
+        skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=args.seed)
 
-        # ===== 新增：随机打乱 =====
-        perm = torch.randperm(len(labels))
-        embeds = embeds[perm]
-        labels = labels[perm]
-        # ==========================
+        for fold, (train_idx, test_idx) in enumerate(
+                skf.split(embeds.cpu().numpy(), labels.cpu().numpy())):
 
-        train_size = int(0.8 * len(labels))
-        train_embs = embeds[:train_size]
-        test_embs = embeds[train_size:]
-        train_labels = labels[:train_size]
-        test_labels = labels[train_size:]
+            train_embs = embeds[train_idx]
+            test_embs = embeds[test_idx]
+            train_labels = labels[train_idx]
+            test_labels = labels[test_idx]
 
-        logreg = LogReg(args.hid_dim, n_classes).to(args.device)
-        opt = th.optim.Adam(logreg.parameters(), lr=args.lr2, weight_decay=args.wd2)
-        loss_fn = nn.CrossEntropyLoss()
+            logreg = LogReg(args.hid_dim, n_classes).to(args.device)
+            opt = th.optim.Adam(logreg.parameters(), lr=args.lr2, weight_decay=args.wd2)
+            loss_fn = nn.CrossEntropyLoss()
 
-        for epoch in range(2000):
-            logreg.train()
-            opt.zero_grad()
-            logits = logreg(train_embs)
-            loss = loss_fn(logits, train_labels)
-            loss.backward()
-            opt.step()
+            for epoch in range(2000):
+                logreg.train()
+                opt.zero_grad()
+                logits = logreg(train_embs)
+                loss = loss_fn(logits, train_labels)
+                loss.backward()
+                opt.step()
 
-        logreg.eval()
-        with th.no_grad():
-            test_logits = logreg(test_embs)
-            test_preds = th.argmax(test_logits, dim=1)
-            test_acc = th.sum(test_preds == test_labels).float() / test_labels.shape[0]
+            logreg.eval()
+            with th.no_grad():
+                test_logits = logreg(test_embs)
+                test_preds = th.argmax(test_logits, dim=1)
+                test_acc = (test_preds == test_labels).float().mean()
 
-        results.append(test_acc.cpu().item())
-
-    print("Final Acc:", np.mean(results) * 100)
+            results.append(test_acc.item())
+            print(f"Fold {fold+1}: {test_acc.item()*100:.2f}")
+        # =================================================
+    mean = np.mean(results)
+    std = np.std(results)
+    print(f"\nFinal Acc: {mean*100:.2f} ± {std*100:.2f}")
