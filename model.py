@@ -50,36 +50,29 @@ class Model(nn.Module):
 
         self.encoder = ChebNetII(num_features=in_dim, hidden=out_dim, K=K, dprate=dprate, dropout=dropout, is_bns=is_bns, act_fn=act_fn)
 
-        self.disc = Discriminator(out_dim)
-        self.act_fn = nn.ReLU()
         self.alpha = nn.Parameter(torch.tensor(0.5), requires_grad=True)
         self.beta = nn.Parameter(torch.tensor(0.5), requires_grad=True)
-
-    def get_embedding(self, edge_index, feat):
-        h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
-        h2 = self.encoder(x=feat, edge_index=edge_index, highpass=False)
-
-        h = torch.mul(self.alpha, h1) + torch.mul(self.beta, h2)
-
-        return h.detach()
-
+         # projection head
+        self.proj = nn.Sequential(nn.Linear(out_dim, out_dim), nn.ReLU(), nn.Linear(out_dim, out_dim))
 
     def forward(self, edge_index, feat, shuf_feat):
-        # positive
-        h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
-        h2 = self.encoder(x=feat, edge_index=edge_index, highpass=False)
+         # 频率分解
+        h_high = self.encoder(x=x, edge_index=edge_index, highpass=True)
+        h_low  = self.encoder(x=x, edge_index=edge_index, highpass=False)
 
-        # negative
-        h3 = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=True)
-        h4 = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=False)
+        # graph-level pooling
+        g_high = global_mean_pool(h_high, batch)
+        g_low  = global_mean_pool(h_low, batch)
 
-        h = torch.mul(self.alpha, h1) + torch.mul(self.beta, h2)
+        # mixing 
+        g_mix = self.alpha * g_high + self.beta * g_low
 
-        c = self.act_fn(torch.mean(h, dim=0))
+        # 投影到对比空间
+        z_high = self.proj(g_high)
+        z_low  = self.proj(g_low)
+        z_mix  = self.proj(g_mix)
 
-        out = self.disc(h1, h2, h3, h4, c)
-
-        return out
+        return z_high, z_low, z_mix
 
 
 class ChebNetII(torch.nn.Module):
