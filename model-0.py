@@ -101,7 +101,7 @@ class ChebNetII(torch.nn.Module):
         self.lin1.reset_parameters()
 
     def forward(self, x, edge_index, highpass=True):
-
+        x = x.float() 
         if self.dprate == 0.0:
             x = self.prop1(x, edge_index, highpass=highpass)
         else:
