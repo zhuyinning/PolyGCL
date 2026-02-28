@@ -107,7 +107,7 @@ if __name__ == "__main__":
             n_feat = 1
         n_classes = dataset.num_classes
 
-        loader = GeoDataLoader(dataset, batch_size=64, shuffle=True)
+        loader = GeoDataLoader(dataset, batch_size=64, shuffle=True, drop_last=True)
 
         total_nodes = sum([d.num_nodes for d in dataset])
         lbl1 = th.ones(total_nodes * 2)
@@ -123,7 +123,7 @@ if __name__ == "__main__":
         {'params': model.disc.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
         {'params': model.encoder.prop1.parameters(), 'weight_decay': args.wd, 'lr': args.lr},
         {'params': model.alpha, 'weight_decay': args.wd, 'lr': args.lr},
-        {'params': model.beta, 'weight_decay': args.wd, 'lr': args.lr}
+        {'params': model.beta, 'weight_decay': args.wd, 'lr': args.lr},
         {'params': model.graph_proj.parameters(), 'weight_decay': args.wd, 'lr': args.lr}
     ])
 
@@ -166,9 +166,9 @@ if __name__ == "__main__":
                     loss = loss_node + args.lambda_graph * loss_graph
                     loss.backward()
                     loss_epoch += loss.item()
-
-                optimizer.step()
-                optimizer.zero_grad()
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    
                 loss = loss_epoch / len(loader)
 
             if loss < best:
