@@ -169,6 +169,10 @@ if __name__ == "__main__":
                     
                 loss = loss_epoch / len(loader)
 
+            if (epoch + 1) % 10 == 0:
+                weighted_graph_loss = args.lambda_graph * loss_graph.item()
+                print(f"Epoch {epoch+1:03d} | Node Loss: {loss_node.item():.4f} | Raw Graph Loss: {loss_graph.item():.4f} | Weighted Graph Loss: {weighted_graph_loss:.4f}")
+
             if loss < best:
                 best = loss
                 best_t = epoch
