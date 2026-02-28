@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import get_laplacian
-from torch_geometric.nn import global_mean_pool
+from torch_geometric.nn import global_add_pool
 
 import torch
 import torch.nn.functional as F
@@ -83,8 +83,8 @@ class Model(nn.Module):
         # graph-level
         graph_reps = None
         if batch is not None:
-            g_high = global_mean_pool(h_high, batch)
-            g_low  = global_mean_pool(h_low, batch)
+            g_high = global_add_pool(h_high, batch)
+            g_low  = global_add_pool(h_low, batch)
             g_fuse = torch.mul(self.alpha, g_high) + torch.mul(self.beta, g_low)
             # project to contrastive space
             z_high = self.graph_proj(g_high)
