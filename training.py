@@ -161,7 +161,7 @@ if __name__ == "__main__":
                     z_high, z_low, z_fuse = graph_reps
                     loss_graph = 0.5 * (info_nce(z_fuse, z_high, args.tau) + info_nce(z_fuse, z_low, args.tau))
         
-                    loss = loss_node + lambda_eff * loss_graph
+                    loss = loss_node + args.lambda_graph * loss_graph
                     loss.backward()
                     loss_epoch += loss.item()
                     optimizer.step()
@@ -171,8 +171,8 @@ if __name__ == "__main__":
 
             if (epoch + 1) % 10 == 0:
                 weighted_graph_loss = args.lambda_graph * loss_graph.item()
-                print(f"Epoch {epoch+1:03d} | Node: {loss_node.item():.4f} | Graph: {loss_graph.item():.4f} | Weighted Graph: {weighted_graph_loss:.4f}")
-                
+                print(f"Epoch {epoch+1:03d} | Node Loss: {loss_node.item():.4f} | Raw Graph Loss: {loss_graph.item():.4f} | Weighted Graph Loss: {weighted_graph_loss:.4f}")
+
             if loss < best:
                 best = loss
                 best_t = epoch
