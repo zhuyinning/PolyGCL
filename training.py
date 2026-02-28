@@ -24,7 +24,7 @@ parser.add_argument('--dev', type=int, default=0)
 parser.add_argument("--dataname", type=str, default="cora")
 parser.add_argument("--gpu", type=int, default=0)
 parser.add_argument("--epochs", type=int, default=500)
-parser.add_argument("--patience", type=int, default=20)
+parser.add_argument("--patience", type=int, default=100)
 parser.add_argument("--lr", type=float, default=0.010)
 parser.add_argument("--lr1", type=float, default=0.001)
 parser.add_argument("--lr2", type=float, default=0.01)
@@ -37,8 +37,8 @@ parser.add_argument('--dropout', type=float, default=0.5)
 parser.add_argument('--dprate', type=float, default=0.5)
 parser.add_argument('--is_bns', type=bool, default=False)
 parser.add_argument('--act_fn', default='relu')
-parser.add_argument("--tau", type=float, default=0.2)
-parser.add_argument("--lambda_graph", type=float, default=0.1)
+parser.add_argument("--tau", type=float, default=0.1)
+parser.add_argument("--lambda_graph", type=float, default=1，0)
 args = parser.parse_args()
 
 if args.gpu != -1 and th.cuda.is_available():
@@ -160,8 +160,10 @@ if __name__ == "__main__":
                     # graph loss
                     z_high, z_low, z_fuse = graph_reps
                     loss_graph = 0.5 * (info_nce(z_fuse, z_high, args.tau) + info_nce(z_fuse, z_low, args.tau))
+                    # 动态自适应lmbda_graph权重
+                    lambda_eff = args.lambda_graph * (loss_node.detach() / (loss_graph.detach() + 1e-5))
         
-                    loss = loss_node + args.lambda_graph * loss_graph
+                    loss = loss_node + lambda_eff * loss_graph
                     loss.backward()
                     loss_epoch += loss.item()
                     optimizer.step()
@@ -171,8 +173,8 @@ if __name__ == "__main__":
 
             if (epoch + 1) % 10 == 0:
                 weighted_graph_loss = args.lambda_graph * loss_graph.item()
-                print(f"Epoch {epoch+1:03d} | Node Loss: {loss_node.item():.4f} | Raw Graph Loss: {loss_graph.item():.4f} | Weighted Graph Loss: {weighted_graph_loss:.4f}")
-
+                print(f"Epoch {epoch+1:03d} | Node: {loss_node.item():.4f} | Graph: {loss_graph.item():.4f} | λ_eff: {lambda_eff.item():.4f} | Weighted Graph: {weighted_graph_loss:.4f}")
+                
             if loss < best:
                 best = loss
                 best_t = epoch
