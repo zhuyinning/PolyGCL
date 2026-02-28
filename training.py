@@ -8,6 +8,7 @@ import random
 import numpy as np
 import torch as th
 import torch.nn as nn
+import torch.nn.functional as F
 from utils import random_splits
 
 warnings.filterwarnings("ignore")
@@ -36,6 +37,8 @@ parser.add_argument('--dropout', type=float, default=0.5)
 parser.add_argument('--dprate', type=float, default=0.5)
 parser.add_argument('--is_bns', type=bool, default=False)
 parser.add_argument('--act_fn', default='relu')
+parser.add_argument("--tau", type=float, default=0.2)
+parser.add_argument("--lambda_graph", type=float, default=0.5)
 args = parser.parse_args()
 
 if args.gpu != -1 and th.cuda.is_available():
@@ -58,6 +61,21 @@ def get_feat(batch, n_feat, device):
         deg = torch.bincount(row, minlength=batch.num_nodes).float().unsqueeze(1)
         feat = deg.to(device)
     return feat
+
+def info_nce(z1, z2, tau=0.2):
+    """
+    z1, z2: [B, D]
+    positives are diagonal pairs (i,i)
+    negatives are other samples in the batch
+    """
+    z1 = F.normalize(z1, dim=1)
+    z2 = F.normalize(z2, dim=1)
+
+    logits = (z1 @ z2.t()) / tau          # [B, B]
+    labels = torch.arange(z1.size(0), device=z1.device)
+    loss_12 = F.cross_entropy(logits, labels)
+    loss_21 = F.cross_entropy(logits.t(), labels)
+    return 0.5 * (loss_12 + loss_21)
     
 if __name__ == "__main__":
     print(args)
@@ -106,6 +124,7 @@ if __name__ == "__main__":
         {'params': model.encoder.prop1.parameters(), 'weight_decay': args.wd, 'lr': args.lr},
         {'params': model.alpha, 'weight_decay': args.wd, 'lr': args.lr},
         {'params': model.beta, 'weight_decay': args.wd, 'lr': args.lr}
+        {'params': model.graph_proj.parameters(), 'weight_decay': args.wd, 'lr': args.lr}
     ])
 
     loss_fn = nn.BCEWithLogitsLoss()
@@ -125,22 +144,32 @@ if __name__ == "__main__":
                 shuf_feat = feat[shuf_idx, :]
                 out = model(edge_index, feat, shuf_feat)
             else:
-                outs = []
+                loss_epoch = 0.0
                 for batch in loader:
                     batch = batch.to(args.device)
+                    
                     feat = batch.x
                     if feat is None:
                         feat = torch.ones((batch.num_nodes, n_feat), device=args.device)
                     edge_index = batch.edge_index
                     shuf_idx = torch.randperm(feat.shape[0])
                     shuf_feat = feat[shuf_idx]
-                    out = model(edge_index, feat, shuf_feat)
-                    outs.append(out)
-                out = torch.cat(outs)
+                    node_logits, graph_reps = model(edge_index, feat, shuf_feat, batch=batch.batch)
+                    # node loss
+                    num_nodes = feat.size(0)
+                    node_lbl = torch.cat([torch.ones(num_nodes * 2), torch.zeros(num_nodes * 2)]).to(args.device)
+                    loss_node = loss_fn(node_logits, node_lbl)
+                    # graph loss
+                    z_high, z_low, z_fuse = graph_reps
+                    loss_graph = 0.5 * (info_nce(z_fuse, z_high, args.tau) + info_nce(z_fuse, z_low, args.tau)) + 0.5 * info_nce(z_high, z_low, args.tau)
+        
+                    loss = loss_node + args.lambda_graph * loss_graph
+                    loss.backward()
+                    loss_epoch += loss.item()
 
-            loss = loss_fn(out, lbl)
-            loss.backward()
-            optimizer.step()
+                optimizer.step()
+                optimizer.zero_grad()
+                loss = loss_epoch / len(loader)
 
             if loss < best:
                 best = loss
