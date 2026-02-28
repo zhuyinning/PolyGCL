@@ -38,7 +38,7 @@ parser.add_argument('--dprate', type=float, default=0.5)
 parser.add_argument('--is_bns', type=bool, default=False)
 parser.add_argument('--act_fn', default='relu')
 parser.add_argument("--tau", type=float, default=0.1)
-parser.add_argument("--lambda_graph", type=float, default=1，0)
+parser.add_argument("--lambda_graph", type=float, default=1.0)
 args = parser.parse_args()
 
 if args.gpu != -1 and th.cuda.is_available():
