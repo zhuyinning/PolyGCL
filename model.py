@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import get_laplacian
+from torch_geometric.nn import global_mean_pool
 
 import torch
 import torch.nn.functional as F
@@ -54,6 +55,7 @@ class Model(nn.Module):
         self.act_fn = nn.ReLU()
         self.alpha = nn.Parameter(torch.tensor(0.5), requires_grad=True)
         self.beta = nn.Parameter(torch.tensor(0.5), requires_grad=True)
+        self.graph_proj = nn.Sequential(nn.Linear(out_dim, out_dim), nn.ReLU(), nn.Linear(out_dim, out_dim))
 
     def get_embedding(self, edge_index, feat):
         h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
@@ -64,24 +66,34 @@ class Model(nn.Module):
         return h.detach()
 
 
-    def forward(self, edge_index, feat, shuf_feat):
+    def forward(self, edge_index, feat, shuf_feat, batch=None):
         # positive
-        h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
-        h2 = self.encoder(x=feat, edge_index=edge_index, highpass=False)
+        h_high = self.encoder(x=feat, edge_index=edge_index, highpass=True)
+        h_low = self.encoder(x=feat, edge_index=edge_index, highpass=False)
 
         # negative
-        h3 = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=True)
-        h4 = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=False)
+        h_high_shuf = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=True)
+        h_low_shuf = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=False)
 
-        h = torch.mul(self.alpha, h1) + torch.mul(self.beta, h2)
-
+        # node-level 
+        h = torch.mul(self.alpha, h_high) + torch.mul(self.beta, h_low)
         c = self.act_fn(torch.mean(h, dim=0))
+        node_logits = self.disc(h_high, h_low, h_high_shuf, h_low_shuf, c)
 
-        out = self.disc(h1, h2, h3, h4, c)
+        # graph-level
+        graph_reps = None
+        if batch is not None:
+            g_high = global_mean_pool(h_high, batch)
+            g_low  = global_mean_pool(h_low, batch)
+            g_fuse = torch.mul(self.alpha, g_high) + torch.mul(self.beta, g_low)
+            # project to contrastive space
+            z_high = self.graph_proj(g_high)
+            z_low  = self.graph_proj(g_low)
+            z_fuse = self.graph_proj(g_fuse)
+            graph_reps = (z_high, z_low, z_fuse)
 
-        return out
-
-
+        return node_logits, graph_reps
+    
 class ChebNetII(torch.nn.Module):
     def __init__(self, num_features, hidden=512, K=10, dprate=0.50, dropout=0.50, is_bns=False, act_fn='relu'):
         super(ChebNetII, self).__init__()
