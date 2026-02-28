@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore")
 
 from model import LogReg, Model
 from torch_geometric.loader import DataLoader as GeoDataLoader
-from torch_geometric.nn import global_mean_pool
+from torch_geometric.nn import global_add_pool
 from sklearn.model_selection import StratifiedKFold
 
 parser = argparse.ArgumentParser(description="PolyGCL")
@@ -38,7 +38,7 @@ parser.add_argument('--dprate', type=float, default=0.5)
 parser.add_argument('--is_bns', type=bool, default=False)
 parser.add_argument('--act_fn', default='relu')
 parser.add_argument("--tau", type=float, default=0.2)
-parser.add_argument("--lambda_graph", type=float, default=0.5)
+parser.add_argument("--lambda_graph", type=float, default=0.1)
 args = parser.parse_args()
 
 if args.gpu != -1 and th.cuda.is_available():
@@ -148,9 +148,7 @@ if __name__ == "__main__":
                 for batch in loader:
                     batch = batch.to(args.device)
                     
-                    feat = batch.x
-                    if feat is None:
-                        feat = torch.ones((batch.num_nodes, n_feat), device=args.device)
+                    feat = get_feat(batch, n_feat, args.device)
                     edge_index = batch.edge_index
                     shuf_idx = torch.randperm(feat.shape[0])
                     shuf_feat = feat[shuf_idx]
@@ -161,7 +159,7 @@ if __name__ == "__main__":
                     loss_node = loss_fn(node_logits, node_lbl)
                     # graph loss
                     z_high, z_low, z_fuse = graph_reps
-                    loss_graph = 0.5 * (info_nce(z_fuse, z_high, args.tau) + info_nce(z_fuse, z_low, args.tau)) + 0.5 * info_nce(z_high, z_low, args.tau)
+                    loss_graph = 0.5 * (info_nce(z_fuse, z_high, args.tau) + info_nce(z_fuse, z_low, args.tau))
         
                     loss = loss_node + args.lambda_graph * loss_graph
                     loss.backward()
@@ -246,7 +244,7 @@ if __name__ == "__main__":
             batch = batch.to(args.device)
             feat = get_feat(batch, n_feat, args.device)
             node_emb = model.get_embedding(batch.edge_index, feat)
-            graph_emb = global_mean_pool(node_emb, batch.batch)
+            graph_emb = global_add_pool(node_emb, batch.batch)
             embeds_list.append(graph_emb)
             labels_list.append(batch.y)
 
