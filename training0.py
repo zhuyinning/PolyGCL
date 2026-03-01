@@ -140,6 +140,8 @@ if __name__ == "__main__":
 
     with alive_bar(args.epochs) as bar:
         for epoch in range(args.epochs):
+            ema_cos_sim = 0.0
+            ema_momentum = 0.9
             model.train()
             optimizer.zero_grad()
 
@@ -158,18 +160,32 @@ if __name__ == "__main__":
                     shuf_feat = feat[shuf_idx]
                     node_logits, graph_reps = model(edge_index, feat, shuf_feat, batch=batch.batch)
         
-                    # 计算原始loss
-                    num_nodes = feat.size(0)
-                    node_lbl = torch.cat([torch.ones(num_nodes * 2), torch.zeros(num_nodes * 2)]).to(args.device)
+                    # node loss
                     loss_node = loss_fn(node_logits, node_lbl)
-                    z_high, z_low, z_fuse = graph_reps 
+                    # graph loss
+                    z_high, z_low, z_fuse = graph_reps
                     loss_graph = 0.5 * (info_nce(z_fuse, z_high, args.tau) + info_nce(z_fuse, z_low, args.tau))
-                    # 归一化置信度
-                    base_bce = -math.log(0.5)  # ln(2)
-                    loss_drop = torch.clamp(base_bce - loss_node.detach(), min=0.0)
-                    progress = torch.clamp(loss_drop / args.margin, max=1.0)
-                    lambda_eff = (args.lambda_min + progress * (args.lambda_graph - args.lambda_min))
-                    # 融合loss
+                    # Gradient Alignment
+                    grad_node = torch.autograd.grad(loss_node, h_high, retain_graph=True)[0]
+                    grad_graph = torch.autograd.grad(loss_graph, h_high, retain_graph=True)[0]
+                    # flatten
+                    g1 = grad_node.view(-1)
+                    g2 = grad_graph.view(-1)
+                    # 安全保护
+                    if torch.norm(g1) == 0 or torch.norm(g2) == 0:
+                        cos_sim = torch.tensor(0.0).to(args.device)
+                    else:
+                        cos_sim = F.cosine_similarity(g1.unsqueeze(0), g2.unsqueeze(0)).squeeze()
+                    # EMA 平滑
+                    if epoch == 0:
+                        ema_cos_sim = cos_sim.item()
+                    else:
+                        ema_cos_sim = (ema_momentum * ema_cos_sim + (1 - ema_momentum) * cos_sim.item())
+                    # 映射到 λ
+                    scale_factor = torch.sigmoid(torch.tensor(3.0 * ema_cos_sim)).to(args.device)
+                    lambda_eff = args.lambda_graph * scale_factor
+                    lambda_eff = torch.clamp(lambda_eff, min=0.01)
+                    # final loss
                     loss = loss_node + lambda_eff * loss_graph
                     
                     optimizer.zero_grad()
