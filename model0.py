@@ -92,7 +92,7 @@ class Model(nn.Module):
             z_fuse = self.graph_proj(g_fuse)
             graph_reps = (z_high, z_low, z_fuse)
 
-        return node_logits, graph_reps, h
+        return node_logits, graph_reps, h_high
     
 class ChebNetII(torch.nn.Module):
     def __init__(self, num_features, hidden=512, K=10, dprate=0.50, dropout=0.50, is_bns=False, act_fn='relu'):
