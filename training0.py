@@ -40,9 +40,6 @@ parser.add_argument('--dprate', type=float, default=0.5)
 parser.add_argument('--is_bns', type=bool, default=False)
 parser.add_argument('--act_fn', default='relu')
 parser.add_argument("--tau", type=float, default=0.1)
-parser.add_argument("--lambda_graph", type=float, default=0.35)
-parser.add_argument('--lambda_min', type=float, default=0.08)
-parser.add_argument('--margin', type=float, default=0.05)
 args = parser.parse_args()
 
 if args.gpu != -1 and th.cuda.is_available():
@@ -182,7 +179,7 @@ if __name__ == "__main__":
                 loss = loss_epoch / len(loader)
 
             if (epoch + 1) % 10 == 0:
-                print(f"Epoch {epoch+1:03d} | "f"Node: {loss_node.item():.4f} | "f"progress: {progress.item():.3f} | "f"λ_eff: {lambda_eff.item():.4f} | W_Node: {precision_node.item():.4f}")
+                print(f"Epoch {epoch+1:03d} | Node: {loss_node.item():.4f} | Graph: {loss_graph.item():.4f} | W_Node: {precision_node.item():.4f} | W_Graph: {precision_graph.item():.4f}")
 
             if loss < best:
                 best = loss
