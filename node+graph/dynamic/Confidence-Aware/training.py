@@ -1,6 +1,8 @@
+# 此方案为 Normalized Confidence-Aware Adaptive Regularization  (归一化置信度感知自适应正则化)
 import argparse
 import warnings
 import seaborn as sns
+import math
 
 import torch
 from alive_progress import alive_bar
@@ -38,7 +40,9 @@ parser.add_argument('--dprate', type=float, default=0.5)
 parser.add_argument('--is_bns', type=bool, default=False)
 parser.add_argument('--act_fn', default='relu')
 parser.add_argument("--tau", type=float, default=0.1)
-parser.add_argument("--lambda_graph", type=float, default=0.1)
+parser.add_argument("--lambda_graph", type=float, default=0.08)
+parser.add_argument('--lambda_min', type=float, default=0.05)
+parser.add_argument('--margin', type=float, default=0.03)
 args = parser.parse_args()
 
 if args.gpu != -1 and th.cuda.is_available():
@@ -153,25 +157,30 @@ if __name__ == "__main__":
                     shuf_idx = torch.randperm(feat.shape[0])
                     shuf_feat = feat[shuf_idx]
                     node_logits, graph_reps = model(edge_index, feat, shuf_feat, batch=batch.batch)
-                    # node loss
+        
+                    # 计算原始loss
                     num_nodes = feat.size(0)
                     node_lbl = torch.cat([torch.ones(num_nodes * 2), torch.zeros(num_nodes * 2)]).to(args.device)
                     loss_node = loss_fn(node_logits, node_lbl)
-                    # graph loss
-                    z_high, z_low, z_fuse = graph_reps
+                    z_high, z_low, z_fuse = graph_reps 
                     loss_graph = 0.5 * (info_nce(z_fuse, z_high, args.tau) + info_nce(z_fuse, z_low, args.tau))
-        
-                    loss = loss_node + args.lambda_graph * loss_graph
-                    loss.backward()
-                    loss_epoch += loss.item()
-                    optimizer.step()
+                    # 归一化置信度
+                    base_bce = -math.log(0.5)  # ln(2)
+                    loss_drop = torch.clamp(base_bce - loss_node.detach(), min=0.0)
+                    progress = torch.clamp(loss_drop / args.margin, max=1.0)
+                    lambda_eff = (args.lambda_min + progress * (args.lambda_graph - args.lambda_min))
+                    # 融合loss
+                    loss = loss_node + lambda_eff * loss_graph
+                    
                     optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    loss_epoch += loss.item()
                     
                 loss = loss_epoch / len(loader)
 
             if (epoch + 1) % 10 == 0:
-                weighted_graph_loss = args.lambda_graph * loss_graph.item()
-                print(f"Epoch {epoch+1:03d} | Node Loss: {loss_node.item():.4f} | Raw Graph Loss: {loss_graph.item():.4f} | Weighted Graph Loss: {weighted_graph_loss:.4f}")
+                print(f"Epoch {epoch+1:03d} | "f"Node: {loss_node.item():.4f} | "f"progress: {progress.item():.3f} | "f"λ_eff: {lambda_eff.item():.4f}")
 
             if loss < best:
                 best = loss
