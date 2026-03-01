@@ -158,7 +158,7 @@ if __name__ == "__main__":
                     edge_index = batch.edge_index
                     shuf_idx = torch.randperm(feat.shape[0])
                     shuf_feat = feat[shuf_idx]
-                    node_logits, graph_reps, _ = model(edge_index, feat, shuf_feat, batch=batch.batch)
+                    node_logits, graph_reps, h_high = model(edge_index, feat, shuf_feat, batch=batch.batch)
         
                     # node loss
                     num_nodes = feat.size(0)
