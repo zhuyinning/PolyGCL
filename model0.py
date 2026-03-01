@@ -28,7 +28,6 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
         self.fn = nn.Bilinear(dim, dim, 1)
 
-
     def forward(self, h1, h2, h3, h4, c):
         c_x = c.expand_as(h1).contiguous()
 
