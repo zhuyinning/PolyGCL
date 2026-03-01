@@ -1,3 +1,4 @@
+# 此方案为 node+graph 的初始版本
 import torch as th
 import torch.nn as nn
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
