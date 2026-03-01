@@ -1,3 +1,4 @@
+# 此 model 为稳定性增强的不确定性加权方案
 import torch as th
 import torch.nn as nn
 from torch_geometric.nn.conv.gcn_conv import gcn_norm
@@ -56,6 +57,8 @@ class Model(nn.Module):
         self.alpha = nn.Parameter(torch.tensor(0.5), requires_grad=True)
         self.beta = nn.Parameter(torch.tensor(0.5), requires_grad=True)
         self.graph_proj = nn.Sequential(nn.Linear(out_dim, out_dim), nn.ReLU(), nn.Linear(out_dim, out_dim))
+        # 新增任务级不确定性参数 (底层无界参数 \theta)
+        self.log_vars = nn.Parameter(torch.zeros(2), requires_grad=True)
 
     def get_embedding(self, edge_index, feat):
         h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
