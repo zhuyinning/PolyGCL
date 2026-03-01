@@ -151,7 +151,7 @@ if __name__ == "__main__":
                 out = model(edge_index, feat, shuf_feat)
             else:
                 loss_epoch = 0.0
-                for batch in loader:
+                for batch_idx, batch in enumerate(loader):
                     batch = batch.to(args.device)
                     
                     feat = get_feat(batch, n_feat, args.device)
@@ -177,7 +177,7 @@ if __name__ == "__main__":
                     else:
                         cos_sim = F.cosine_similarity(g1.unsqueeze(0), g2.unsqueeze(0)).squeeze()
                     # EMA 平滑
-                    if epoch == 0:
+                    if batch_idx == 0:
                         ema_cos_sim = cos_sim.item()
                     else:
                         ema_cos_sim = (ema_momentum * ema_cos_sim + (1 - ema_momentum) * cos_sim.item())
@@ -196,7 +196,7 @@ if __name__ == "__main__":
                 loss = loss_epoch / len(loader)
 
             if (epoch + 1) % 10 == 0:
-                print(f"Epoch {epoch+1:03d} | "f"Node: {loss_node.item():.4f} | "f"progress: {progress.item():.3f} | "f"λ_eff: {lambda_eff.item():.4f}")
+                print(f"Epoch {epoch+1:03d} | Node: {loss_node.item():.4f} | Cos_Sim: {ema_cos_sim:.4f} | λ_eff: {lambda_eff.item():.4f}")
 
             if loss < best:
                 best = loss
