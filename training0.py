@@ -161,6 +161,8 @@ if __name__ == "__main__":
                     node_logits, graph_reps, _ = model(edge_index, feat, shuf_feat, batch=batch.batch)
         
                     # node loss
+                    num_nodes = feat.size(0)
+                    node_lbl = torch.cat([torch.ones(num_nodes * 2), torch.zeros(num_nodes * 2)]).to(args.device)
                     loss_node = loss_fn(node_logits, node_lbl)
                     # graph loss
                     z_high, z_low, z_fuse = graph_reps
