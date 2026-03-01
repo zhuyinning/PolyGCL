@@ -1,4 +1,4 @@
-# 此方案为 Normalized Confidence-Aware Adaptive Regularization  (归一化置信度感知自适应正则化)
+# 此方案为稳定性增强的不确定性加权 
 import argparse
 import warnings
 import seaborn as sns
@@ -126,9 +126,10 @@ if __name__ == "__main__":
         {'params': model.encoder.lin1.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
         {'params': model.disc.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
         {'params': model.encoder.prop1.parameters(), 'weight_decay': args.wd, 'lr': args.lr},
-        {'params': model.alpha, 'weight_decay': args.wd, 'lr': args.lr},
-        {'params': model.beta, 'weight_decay': args.wd, 'lr': args.lr},
-        {'params': model.graph_proj.parameters(), 'weight_decay': args.wd, 'lr': args.lr}
+        {'params': model.alpha, 'weight_decay': args.wd, 'lr': args.lr},          # 频谱融合参数
+        {'params': model.beta, 'weight_decay': args.wd, 'lr': args.lr},           # 频谱融合参数
+        {'params': model.graph_proj.parameters(), 'weight_decay': args.wd, 'lr': args.lr},
+        {'params': model.log_vars, 'weight_decay': 0.0, 'lr': args.lr}            # 新增任务权重参数
     ])
 
     loss_fn = nn.BCEWithLogitsLoss()
@@ -164,13 +165,14 @@ if __name__ == "__main__":
                     loss_node = loss_fn(node_logits, node_lbl)
                     z_high, z_low, z_fuse = graph_reps 
                     loss_graph = 0.5 * (info_nce(z_fuse, z_high, args.tau) + info_nce(z_fuse, z_low, args.tau))
-                    # 归一化置信度
-                    base_bce = -math.log(0.5)  # ln(2)
-                    loss_drop = torch.clamp(base_bce - loss_node.detach(), min=0.0)
-                    progress = torch.clamp(loss_drop / args.margin, max=1.0)
-                    lambda_eff = (args.lambda_min + progress * (args.lambda_graph - args.lambda_min))
-                    # 融合loss
-                    loss = loss_node + lambda_eff * loss_graph
+                    # 稳定性增强的不确定性加权 (Stability-Enhanced Uncertainty Weighting)，平滑映射到底层安全区间 [-3, 3]
+                    s_node = 6.0 * torch.sigmoid(model.log_vars[0]) - 3.0
+                    s_graph = 6.0 * torch.sigmoid(model.log_vars[1]) - 3.0      
+                    precision_node = torch.exp(-s_node)
+                    precision_graph = torch.exp(-s_graph)
+                    # Kendall Loss
+                    loss = 0.5 * precision_node * loss_node + 0.5 * s_node + \
+                           0.5 * precision_graph * loss_graph + 0.5 * s_graph
                     
                     optimizer.zero_grad()
                     loss.backward()
@@ -180,7 +182,7 @@ if __name__ == "__main__":
                 loss = loss_epoch / len(loader)
 
             if (epoch + 1) % 10 == 0:
-                print(f"Epoch {epoch+1:03d} | "f"Node: {loss_node.item():.4f} | "f"progress: {progress.item():.3f} | "f"λ_eff: {lambda_eff.item():.4f}")
+                print(f"Epoch {epoch+1:03d} | "f"Node: {loss_node.item():.4f} | "f"progress: {progress.item():.3f} | "f"λ_eff: {lambda_eff.item():.4f} | W_Node: {precision_node.item():.4f}")
 
             if loss < best:
                 best = loss
