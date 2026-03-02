@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import numpy as np
 from torch.nn import Parameter, Linear
 from ChebnetII_pro import ChebnetII_prop
-
+from torch_geometric.nn import global_mean_pool
 
 class LogReg(nn.Module):
     def __init__(self, hid_dim, n_classes):
