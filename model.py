@@ -54,15 +54,18 @@ class Model(nn.Module):
 
         self.disc = Discriminator(out_dim)
         self.act_fn = nn.ReLU()
-        self.alpha = nn.Parameter(torch.tensor(0.5), requires_grad=True)
-        self.beta = nn.Parameter(torch.tensor(0.5), requires_grad=True)
+        self.alpha = nn.Parameter(torch.tensor(0.0), requires_grad=True)
+        self.beta = nn.Parameter(torch.tensor(0.0), requires_grad=True)
         self.graph_proj = nn.Sequential(nn.Linear(out_dim, out_dim), nn.ReLU(), nn.Linear(out_dim, out_dim))
+        self.classifier = nn.Linear(out_dim, n_classes)
 
     def get_embedding(self, edge_index, feat):
         h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
         h2 = self.encoder(x=feat, edge_index=edge_index, highpass=False)
 
-        h = torch.mul(self.alpha, h1) + torch.mul(self.beta, h2)
+        gate_high = torch.sigmoid(self.alpha)
+        gate_low = torch.sigmoid(self.beta)
+        h = gate_high * h1 + gate_low * h2
 
         return h.detach()
 
@@ -76,24 +79,33 @@ class Model(nn.Module):
         h_high_shuf = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=True)
         h_low_shuf = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=False)
 
+        # 生成严格在 [0, 1] 之间的因果门控
+        gate_high = torch.sigmoid(self.alpha)
+        gate_low = torch.sigmoid(self.beta)
+
         # node-level 
-        h = torch.mul(self.alpha, h_high) + torch.mul(self.beta, h_low)
-        c = self.act_fn(torch.mean(h, dim=0))
+        h = gate_high * h_high + gate_low * h_low
+        # detach 全局 summary，防止判别器走捷径
+        c = self.act_fn(torch.mean(h, dim=0)).detach()
         node_logits = self.disc(h_high, h_low, h_high_shuf, h_low_shuf, c)
 
         # graph-level
         graph_reps = None
+        logits = None
         if batch is not None:
             g_high = global_add_pool(h_high, batch)
             g_low  = global_add_pool(h_low, batch)
-            g_fuse = torch.mul(self.alpha, g_high) + torch.mul(self.beta, g_low)
+            # 使用门控融合
+            g_fuse = gate_high * g_high + gate_low * g_low
             # project to contrastive space
             z_high = self.graph_proj(g_high)
             z_low  = self.graph_proj(g_low)
             z_fuse = self.graph_proj(g_fuse)
             graph_reps = (z_high, z_low, z_fuse)
+            # 输出分类预测
+            logits = self.classifier(g_fuse)
 
-        return node_logits, graph_reps
+        return node_logits, graph_reps, logits
     
 class ChebNetII(torch.nn.Module):
     def __init__(self, num_features, hidden=512, K=10, dprate=0.50, dropout=0.50, is_bns=False, act_fn='relu'):
