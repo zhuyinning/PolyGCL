@@ -12,7 +12,7 @@ from utils import random_splits
 
 warnings.filterwarnings("ignore")
 
-from model import LogReg, Model
+from model1 import LogReg, Model
 from torch_geometric.loader import DataLoader as GeoDataLoader
 from torch_geometric.nn import global_mean_pool
 from sklearn.model_selection import StratifiedKFold
