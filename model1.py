@@ -21,39 +21,33 @@ class LogReg(nn.Module):
         ret = self.fc(x)
         return ret
 
-
-class Discriminator(nn.Module):
+# 新增BYOL 风格的非对称预测器 (防语义坍塌) 
+class Predictor(nn.Module):
     def __init__(self, dim):
-        super(Discriminator, self).__init__()
-        self.fn = nn.Bilinear(dim, dim, 1)
+        super(Predictor, self).__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.BatchNorm1d(dim),
+            nn.PReLU(),
+            nn.Linear(dim, dim)
+        )
 
-
-    def forward(self, h1, h2, h3, h4, c):
-        c_x = c.expand_as(h1).contiguous()
-
-        # positive
-        sc_1 = self.fn(h2, c_x).squeeze(1)
-        sc_2 = self.fn(h1, c_x).squeeze(1)
-
-        # negative
-        sc_3 = self.fn(h4, c_x).squeeze(1)
-        sc_4 = self.fn(h3, c_x).squeeze(1)
-
-        logits = th.cat((sc_1, sc_2, sc_3, sc_4))
-
-        return logits
-
+    def forward(self, x):
+        return self.net(x)
+        
 
 class Model(nn.Module):
     def __init__(self, in_dim, out_dim, K, dprate, dropout, is_bns, act_fn):
         super(Model, self).__init__()
 
         self.encoder = ChebNetII(num_features=in_dim, hidden=out_dim, K=K, dprate=dprate, dropout=dropout, is_bns=is_bns, act_fn=act_fn)
-
-        self.disc = Discriminator(out_dim)
+        
         self.act_fn = nn.ReLU()
         self.alpha = nn.Parameter(torch.tensor(0.5), requires_grad=True)
         self.beta = nn.Parameter(torch.tensor(0.5), requires_grad=True)
+        # 替换原有的 Discriminator 为层级 Predictor
+        self.node_predictor = Predictor(out_dim)
+        self.graph_predictor = Predictor(out_dim)
 
     def get_embedding(self, edge_index, feat):
         h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
@@ -63,23 +57,28 @@ class Model(nn.Module):
 
         return h.detach()
 
+    def forward(self, edge_index, feat, batch=None):
+        # PolyGCL 解耦表示
+        Z_H = self.encoder(x=feat, edge_index=edge_index, highpass=True)
+        Z_L = self.encoder(x=feat, edge_index=edge_index, highpass=False)
+        Z = torch.mul(self.alpha, Z_H) + torch.mul(self.beta, Z_L)
 
-    def forward(self, edge_index, feat, shuf_feat):
-        # positive
-        h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
-        h2 = self.encoder(x=feat, edge_index=edge_index, highpass=False)
+        # 2. Node-level 预测
+        P_node_H = self.node_predictor(Z_H)
+        P_node_L = self.node_predictor(Z_L)
 
-        # negative
-        h3 = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=True)
-        h4 = self.encoder(x=shuf_feat, edge_index=edge_index, highpass=False)
+        # 3. Graph-level 
+        if batch is None:
+            batch = torch.zeros(feat.size(0), dtype=torch.long, device=feat.device)
 
-        h = torch.mul(self.alpha, h1) + torch.mul(self.beta, h2)
+        h_H = global_mean_pool(Z_H, batch)
+        h_L = global_mean_pool(Z_L, batch)
+        h = global_mean_pool(Z, batch)
 
-        c = self.act_fn(torch.mean(h, dim=0))
+        P_graph_H = self.graph_predictor(h_H)
+        P_graph_L = self.graph_predictor(h_L)
 
-        out = self.disc(h1, h2, h3, h4, c)
-
-        return out
+        return Z_H, Z_L, Z, P_node_H, P_node_L, h_H, h_L, h, P_graph_H, P_graph_L
 
 
 class ChebNetII(torch.nn.Module):
