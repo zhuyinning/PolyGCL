@@ -37,7 +37,7 @@ class Predictor(nn.Module):
         
 
 class Model(nn.Module):
-    def __init__(self, in_dim, out_dim, K, dprate, dropout, is_bns, act_fn):
+    def __init__(self, in_dim, out_dim, K, dprate, dropout, is_bns, act_fn, n_classes):
         super(Model, self).__init__()
 
         self.encoder = ChebNetII(num_features=in_dim, hidden=out_dim, K=K, dprate=dprate, dropout=dropout, is_bns=is_bns, act_fn=act_fn)
@@ -48,6 +48,8 @@ class Model(nn.Module):
         # 替换原有的 Discriminator 为层级 Predictor
         self.node_predictor = Predictor(out_dim)
         self.graph_predictor = Predictor(out_dim)
+        # 分类器
+        self.classifier = nn.Linear(out_dim, n_classes)
 
     def get_embedding(self, edge_index, feat):
         h1 = self.encoder(x=feat, edge_index=edge_index, highpass=True)
@@ -77,8 +79,9 @@ class Model(nn.Module):
 
         P_graph_H = self.graph_predictor(h_H)
         P_graph_L = self.graph_predictor(h_L)
+        logits = self.classifier(h)
 
-        return Z_H, Z_L, Z, P_node_H, P_node_L, h_H, h_L, h, P_graph_H, P_graph_L
+        return Z_H, Z_L, Z, P_node_H, P_node_L, h_H, h_L, h, P_graph_H, P_graph_L, logits
 
 
 class ChebNetII(torch.nn.Module):
