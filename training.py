@@ -145,7 +145,10 @@ if __name__ == "__main__":
             if not is_graph_dataset:
                 shuf_idx = np.random.permutation(feat.shape[0])
                 shuf_feat = feat[shuf_idx, :]
-                out = model(edge_index, feat, shuf_feat)
+                node_logits, _, _ = model(edge_index, feat, shuf_feat) 
+                loss = loss_fn(node_logits, lbl)
+                loss.backward()
+                optimizer.step()
             else:
                 loss_epoch = 0.0
                 for batch in loader:
