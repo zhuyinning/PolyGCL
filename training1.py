@@ -36,6 +36,10 @@ parser.add_argument('--dropout', type=float, default=0.5)
 parser.add_argument('--dprate', type=float, default=0.5)
 parser.add_argument('--is_bns', type=bool, default=False)
 parser.add_argument('--act_fn', default='relu')
+# 新增权重
+parser.add_argument('--lam_node', type=float, default=1.0)
+parser.add_argument('--lam_graph', type=float, default=1.0)
+parser.add_argument('--lam_ortho', type=float, default=1.0)
 args = parser.parse_args()
 
 if args.gpu != -1 and th.cuda.is_available():
@@ -58,6 +62,18 @@ def get_feat(batch, n_feat, device):
         deg = torch.bincount(row, minlength=batch.num_nodes).float().unsqueeze(1)
         feat = deg.to(device)
     return feat
+
+# 新增一致性对齐 Loss (BYOL 风格)
+def byol_loss(p, z):
+    p = F.normalize(p, dim=-1)
+    z = F.normalize(z, dim=-1)
+    return 2 - 2 * (p * z).sum(dim=-1).mean()
+
+# 新增正交解耦 Loss 
+def ortho_loss(z1, z2):
+    z1 = F.normalize(z1, dim=-1)
+    z2 = F.normalize(z2, dim=-1)
+    return (z1 * z2).sum(dim=-1).abs().mean()
     
 if __name__ == "__main__":
     print(args)
@@ -78,11 +94,6 @@ if __name__ == "__main__":
         edge_index = edge_index.to(args.device)
         feat = feat.to(args.device)
 
-        n_node = feat.shape[0]
-        lbl1 = th.ones(n_node * 2)
-        lbl2 = th.zeros(n_node * 2)
-        lbl = th.cat((lbl1, lbl2)).to(args.device)
-
     else:
         n_feat = dataset.num_features
         if n_feat == 0:
@@ -102,13 +113,12 @@ if __name__ == "__main__":
 
     optimizer = torch.optim.Adam([
         {'params': model.encoder.lin1.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
-        {'params': model.disc.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
+        {'params': model.node_predictor.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
+        {'params': model.graph_predictor.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
         {'params': model.encoder.prop1.parameters(), 'weight_decay': args.wd, 'lr': args.lr},
         {'params': model.alpha, 'weight_decay': args.wd, 'lr': args.lr},
         {'params': model.beta, 'weight_decay': args.wd, 'lr': args.lr}
     ])
-
-    loss_fn = nn.BCEWithLogitsLoss()
 
     best = float("inf")
     cnt_wait = 0
@@ -121,26 +131,37 @@ if __name__ == "__main__":
             optimizer.zero_grad()
 
             if not is_graph_dataset:
-                shuf_idx = np.random.permutation(feat.shape[0])
-                shuf_feat = feat[shuf_idx, :]
-                out = model(edge_index, feat, shuf_feat)
+                batch_idx = torch.zeros(feat.size(0), dtype=torch.long, device=args.device)
+                Z_H, Z_L, Z, P_node_H, P_node_L, h_H, h_L, h, P_graph_H, P_graph_L = model(edge_index, feat, batch_idx)
+                # 计算各种 Loss
+                loss_node = byol_loss(P_node_H, Z.detach()) + byol_loss(P_node_L, Z.detach())
+                loss_graph = byol_loss(P_graph_H, h.detach()) + byol_loss(P_graph_L, h.detach())
+                loss_ortho = ortho_loss(Z_H, Z_L)
+                
+                loss = args.lam_node * loss_node + args.lam_graph * loss_graph + args.lam_ortho * loss_ortho
+                loss.backward()
+                optimizer.step()
             else:
-                outs = []
+                loss_epoch = 0.0
                 for batch in loader:
                     batch = batch.to(args.device)
-                    feat = batch.x
-                    if feat is None:
-                        feat = torch.ones((batch.num_nodes, n_feat), device=args.device)
+                    feat = get_feat(batch, n_feat, args.device)
                     edge_index = batch.edge_index
-                    shuf_idx = torch.randperm(feat.shape[0])
-                    shuf_feat = feat[shuf_idx]
-                    out = model(edge_index, feat, shuf_feat)
-                    outs.append(out)
-                out = torch.cat(outs)
+                    
+                    Z_H, Z_L, Z, P_node_H, P_node_L, h_H, h_L, h, P_graph_H, P_graph_L = model(edge_index, feat, batch.batch)
 
-            loss = loss_fn(out, lbl)
-            loss.backward()
-            optimizer.step()
+                    loss_node = byol_loss(P_node_H, Z.detach()) + byol_loss(P_node_L, Z.detach())
+                    loss_graph = byol_loss(P_graph_H, h.detach()) + byol_loss(P_graph_L, h.detach())
+                    loss_ortho = ortho_loss(Z_H, Z_L)
+
+                    loss = args.lam_node * loss_node + args.lam_graph * loss_graph + args.lam_ortho * loss_ortho
+                    
+                    loss.backward()
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    loss_epoch += loss.item()
+
+                loss = loss_epoch / len(loader)
 
             if loss < best:
                 best = loss
