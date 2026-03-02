@@ -65,14 +65,14 @@ def get_feat(batch, n_feat, device):
 
 # 新增一致性对齐 Loss (BYOL 风格)
 def byol_loss(p, z):
-    p = F.normalize(p, dim=-1)
-    z = F.normalize(z, dim=-1)
+    p = F.normalize(p, dim=-1, eps=1e-8)
+    z = F.normalize(z, dim=-1, eps=1e-8)
     return 2 - 2 * (p * z).sum(dim=-1).mean()
 
 # 新增正交解耦 Loss 
 def ortho_loss(z1, z2):
-    z1 = F.normalize(z1, dim=-1)
-    z2 = F.normalize(z2, dim=-1)
+    z1 = F.normalize(z1, dim=-1, eps=1e-8)
+    z2 = F.normalize(z2, dim=-1, eps=1e-8)
     return (z1 * z2).sum(dim=-1).abs().mean()
     
 if __name__ == "__main__":
