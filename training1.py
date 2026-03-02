@@ -8,6 +8,7 @@ import random
 import numpy as np
 import torch as th
 import torch.nn as nn
+import torch.nn.functional as F
 from utils import random_splits
 
 warnings.filterwarnings("ignore")
@@ -37,9 +38,9 @@ parser.add_argument('--dprate', type=float, default=0.5)
 parser.add_argument('--is_bns', type=bool, default=False)
 parser.add_argument('--act_fn', default='relu')
 # 新增权重
-parser.add_argument('--lam_node', type=float, default=1.0)
-parser.add_argument('--lam_graph', type=float, default=1.0)
-parser.add_argument('--lam_ortho', type=float, default=1.0)
+parser.add_argument('--lam_node', type=float, default=0.2)
+parser.add_argument('--lam_graph', type=float, default=0.2)
+parser.add_argument('--lam_ortho', type=float, default=0.05)
 args = parser.parse_args()
 
 if args.gpu != -1 and th.cuda.is_available():
@@ -110,7 +111,7 @@ if __name__ == "__main__":
     model = Model(in_dim=n_feat, out_dim=args.hid_dim, K=args.K,
                   dprate=args.dprate, dropout=args.dropout,
                   is_bns=args.is_bns, act_fn=args.act_fn,
-                  n_classes=n_classes).to(args.device)e)
+                  n_classes=n_classes).to(args.device))
 
     optimizer = torch.optim.Adam([
         {'params': model.encoder.lin1.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
@@ -135,13 +136,14 @@ if __name__ == "__main__":
 
             if not is_graph_dataset:
                 batch_idx = torch.zeros(feat.size(0), dtype=torch.long, device=args.device)
-                Z_H, Z_L, Z, P_node_H, P_node_L, h_H, h_L, h, P_graph_H, P_graph_L = model(edge_index, feat, batch_idx)
+                Z_H, Z_L, Z, P_node_H, P_node_L, h_H, h_L, h, P_graph_H, P_graph_L, logits = model(edge_index, feat, batch_idx)
                 # 计算各种 Loss
                 loss_node = byol_loss(P_node_H, Z.detach()) + byol_loss(P_node_L, Z.detach())
                 loss_graph = byol_loss(P_graph_H, h.detach()) + byol_loss(P_graph_L, h.detach())
                 loss_ortho = ortho_loss(Z_H, Z_L)
+                loss_cls = ce_loss(logits, label)
                 
-                loss = args.lam_node * loss_node + args.lam_graph * loss_graph + args.lam_ortho * loss_ortho
+                loss = loss_cls + args.lam_node * loss_node + args.lam_graph * loss_graph + args.lam_ortho * loss_ortho
                 loss.backward()
                 optimizer.step()
             else:
