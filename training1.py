@@ -109,17 +109,20 @@ if __name__ == "__main__":
 
     model = Model(in_dim=n_feat, out_dim=args.hid_dim, K=args.K,
                   dprate=args.dprate, dropout=args.dropout,
-                  is_bns=args.is_bns, act_fn=args.act_fn).to(args.device)
+                  is_bns=args.is_bns, act_fn=args.act_fn,
+                  n_classes=n_classes).to(args.device)e)
 
     optimizer = torch.optim.Adam([
         {'params': model.encoder.lin1.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
         {'params': model.node_predictor.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
         {'params': model.graph_predictor.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
         {'params': model.encoder.prop1.parameters(), 'weight_decay': args.wd, 'lr': args.lr},
+        {'params': model.classifier.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
         {'params': model.alpha, 'weight_decay': args.wd, 'lr': args.lr},
         {'params': model.beta, 'weight_decay': args.wd, 'lr': args.lr}
     ])
 
+    ce_loss = nn.CrossEntropyLoss()
     best = float("inf")
     cnt_wait = 0
     best_t = 0
@@ -148,13 +151,14 @@ if __name__ == "__main__":
                     feat = get_feat(batch, n_feat, args.device)
                     edge_index = batch.edge_index
                     
-                    Z_H, Z_L, Z, P_node_H, P_node_L, h_H, h_L, h, P_graph_H, P_graph_L = model(edge_index, feat, batch.batch)
+                    Z_H, Z_L, Z, P_node_H, P_node_L, h_H, h_L, h, P_graph_H, P_graph_L, logits = model(edge_index, feat, batch.batch)
 
                     loss_node = byol_loss(P_node_H, Z.detach()) + byol_loss(P_node_L, Z.detach())
                     loss_graph = byol_loss(P_graph_H, h.detach()) + byol_loss(P_graph_L, h.detach())
                     loss_ortho = ortho_loss(Z_H, Z_L)
+                    loss_cls = ce_loss(logits, batch.y)
 
-                    loss = args.lam_node * loss_node + args.lam_graph * loss_graph + args.lam_ortho * loss_ortho
+                    loss = loss_cls + args.lam_node * loss_node + args.lam_graph * loss_graph + args.lam_ortho * loss_ortho
                     
                     loss.backward()
                     optimizer.step()
