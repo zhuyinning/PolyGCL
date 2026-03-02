@@ -111,7 +111,7 @@ if __name__ == "__main__":
     model = Model(in_dim=n_feat, out_dim=args.hid_dim, K=args.K,
                   dprate=args.dprate, dropout=args.dropout,
                   is_bns=args.is_bns, act_fn=args.act_fn,
-                  n_classes=n_classes).to(args.device))
+                  n_classes=n_classes).to(args.device)
 
     optimizer = torch.optim.Adam([
         {'params': model.encoder.lin1.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
