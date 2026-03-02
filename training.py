@@ -39,6 +39,7 @@ parser.add_argument('--is_bns', type=bool, default=False)
 parser.add_argument('--act_fn', default='relu')
 parser.add_argument("--tau", type=float, default=0.1)
 parser.add_argument("--lambda_graph", type=float, default=0.1)
+parser.add_argument("--warmup_epochs", type=int, default=20)
 args = parser.parse_args()
 
 if args.gpu != -1 and th.cuda.is_available():
@@ -116,7 +117,7 @@ if __name__ == "__main__":
 
     model = Model(in_dim=n_feat, out_dim=args.hid_dim, K=args.K,
                   dprate=args.dprate, dropout=args.dropout,
-                  is_bns=args.is_bns, act_fn=args.act_fn).to(args.device)
+                  is_bns=args.is_bns, act_fn=args.act_fn, n_classes=n_classes).to(args.device)
 
     optimizer = torch.optim.Adam([
         {'params': model.encoder.lin1.parameters(), 'weight_decay': args.wd1, 'lr': args.lr1},
@@ -124,10 +125,12 @@ if __name__ == "__main__":
         {'params': model.encoder.prop1.parameters(), 'weight_decay': args.wd, 'lr': args.lr},
         {'params': model.alpha, 'weight_decay': args.wd, 'lr': args.lr},
         {'params': model.beta, 'weight_decay': args.wd, 'lr': args.lr},
-        {'params': model.graph_proj.parameters(), 'weight_decay': args.wd, 'lr': args.lr}
+        {'params': model.graph_proj.parameters(), 'weight_decay': args.wd, 'lr': args.lr},
+        {'params': model.classifier.parameters(), 'weight_decay': args.wd, 'lr': args.lr} # 🌟 新增
     ])
 
-    loss_fn = nn.BCEWithLogitsLoss()
+    loss_fn = nn.BCEWithLogitsLoss() # 用于 Node loss
+    loss_fn_cls = nn.CrossEntropyLoss() # 用于分类 loss
 
     best = float("inf")
     cnt_wait = 0
@@ -152,16 +155,31 @@ if __name__ == "__main__":
                     edge_index = batch.edge_index
                     shuf_idx = torch.randperm(feat.shape[0])
                     shuf_feat = feat[shuf_idx]
-                    node_logits, graph_reps = model(edge_index, feat, shuf_feat, batch=batch.batch)
-                    # node loss
+                    
+                    node_logits, graph_reps, logits = model(edge_index, feat, shuf_feat, batch=batch.batch)
+                    
+                    # 计算 Node loss 和 Graph loss
                     num_nodes = feat.size(0)
                     node_lbl = torch.cat([torch.ones(num_nodes * 2), torch.zeros(num_nodes * 2)]).to(args.device)
                     loss_node = loss_fn(node_logits, node_lbl)
-                    # graph loss
                     z_high, z_low, z_fuse = graph_reps
                     loss_graph = 0.5 * (info_nce(z_fuse, z_high, args.tau) + info_nce(z_fuse, z_low, args.tau))
         
-                    loss = loss_node + args.lambda_graph * loss_graph
+                    # 计算分类 Loss
+                    loss_cls = loss_fn_cls(logits, batch.y)
+
+                    # Gate-based Margin Anti-collapse
+                    gate_high = torch.sigmoid(model.alpha)
+                    gate_low  = torch.sigmoid(model.beta)
+                    margin = 0.05
+                    loss_reg_ab = F.relu(margin - gate_high) + F.relu(margin - gate_low)
+
+                    # SSL Warmup
+                    current_ssl_weight = min(1.0, epoch / args.warmup_epochs) * args.lambda_graph
+
+                    # 联合优化 Loss
+                    loss = loss_cls + current_ssl_weight * (loss_node + loss_graph) + 1.0 * loss_reg_ab
+                    
                     loss.backward()
                     loss_epoch += loss.item()
                     optimizer.step()
@@ -170,9 +188,12 @@ if __name__ == "__main__":
                 loss = loss_epoch / len(loader)
 
             if (epoch + 1) % 10 == 0:
-                weighted_graph_loss = args.lambda_graph * loss_graph.item()
-                print(f"Epoch {epoch+1:03d} | Node Loss: {loss_node.item():.4f} | Raw Graph Loss: {loss_graph.item():.4f} | Weighted Graph Loss: {weighted_graph_loss:.4f}")
-
+                weighted_graph_loss = current_ssl_weight * loss_graph.item()
+                weighted_node_loss = current_ssl_weight * loss_node.item()
+                gh = torch.sigmoid(model.alpha).item()
+                gl = torch.sigmoid(model.beta).item()
+                print(f"Epoch {epoch+1:03d} | Cls Loss: {loss_cls.item():.4f} | SSL Node/Graph: {weighted_node_loss:.4f}/{weighted_graph_loss:.4f} | Gate (H/L): {gh:.2f}/{gl:.2f}")
+                
             if loss < best:
                 best = loss
                 best_t = epoch
