@@ -47,7 +47,7 @@ class Discriminator(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, in_dim, out_dim, K, dprate, dropout, is_bns, act_fn):
+    def __init__(self, in_dim, out_dim, K, dprate, dropout, is_bns, act_fn, n_classes=2):
         super(Model, self).__init__()
 
         self.encoder = ChebNetII(num_features=in_dim, hidden=out_dim, K=K, dprate=dprate, dropout=dropout, is_bns=is_bns, act_fn=act_fn)
